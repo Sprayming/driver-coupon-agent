@@ -1,0 +1,4 @@
+# 运行时 SQLite 数据库不进代码仓（可用 seed 脚本重建）
+*.db
+*.db-wal
+*.db-shm

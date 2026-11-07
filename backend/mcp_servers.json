@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "driver-local": {
+      "type": "local",
+      "module": "tools.contracts",
+      "enabled": true
+    },
+    "driver-refund": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "mcp_servers.refund_server"],
+      "enabled": false
+    },
+    "driver-marketing": {
+      "type": "http",
+      "url": "https://marketing.internal/mcp",
+      "headers": {"Authorization": "Bearer replace-me"},
+      "enabled": false
+    }
+  }
+}

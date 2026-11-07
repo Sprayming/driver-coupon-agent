@@ -1,0 +1,33 @@
+# 评测用例——被 evals/runner.py load_eval_cases() 加载
+# 每个用例：用户消息 → 预期 intent → 预期 next_action
+
+cases:
+  - case_id: "faq-coupon-rules"
+    user_message: "未使用的卡券可以退款吗？"
+    expected_intent: "faq_query"
+    expected_next_action: "answer_user"
+
+  - case_id: "refund-request-no-coupon"
+    user_message: "我要退款"
+    expected_intent: "refund_request"
+    expected_next_action: "ask_clarification"
+
+  - case_id: "refund-request-with-coupon"
+    user_message: "我要退款 CP20260101001"
+    expected_intent: "refund_request"
+    expected_next_action: "route_to_controlled_workflow"
+
+  - case_id: "order-query"
+    user_message: "帮我查一下订单 ORD20260101001"
+    expected_intent: "order_query"
+    expected_next_action: "answer_user"
+
+  - case_id: "general-chat"
+    user_message: "你好"
+    expected_intent: "general_chat"
+    expected_next_action: "answer_user"
+
+  - case_id: "promotion-query"
+    user_message: "这个月的冲单奖励活动有什么要求？"
+    expected_intent: "promotion_query"
+    expected_next_action: "answer_user"

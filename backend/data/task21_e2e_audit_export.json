@@ -1,0 +1,159 @@
+{
+  "generated_at": "2026-10-21T14:50:10+00:00",
+  "drill": "导入→驳回→通过→发布→灰度调整→权限拦截→回滚",
+  "stage_order_ids": [
+    2,
+    4,
+    6,
+    7,
+    11,
+    12,
+    13
+  ],
+  "event_count": 13,
+  "timeline": [
+    {
+      "id": 1,
+      "actor": "seed",
+      "action": "seed.completed",
+      "target_type": "database",
+      "target_id": "C:\\Users\\11195\\AppData\\Local\\Temp\\pytest-of-11195\\pytest-84\\test_tr21_2_e2e_drill_audit_ti0\\task21.db",
+      "before_state": null,
+      "after_state": "{\"stable_release\": \"rel-0001\", \"candidate_release\": \"rel-0002\", \"gray_whitelist\": [\"driver-gray-whitelist\"], \"gray_percent\": 20}",
+      "comment": "演示数据播种完成",
+      "created_at": "2026-10-21T14:50:10+00:00"
+    },
+    {
+      "id": 2,
+      "actor": "admin",
+      "action": "draft.created",
+      "target_type": "version",
+      "target_id": "doc-coupon-usage-v2",
+      "before_state": "{\"content_hash\": \"c0105498f845edbd97a77c9d91bd5929f7751b078455f621ddd0f4de4c3ea158\"}",
+      "after_state": "{\"content_hash\": \"ff4c4475f49aee9f1d2d524c892bbcb8f0c7778e855b1bc9fe443772ac8b6c0f\", \"version_no\": 2}",
+      "comment": "sync 导入变更草稿（coupon-usage.md）",
+      "created_at": "2026-10-21T14:50:10+00:00"
+    },
+    {
+      "id": 3,
+      "actor": "admin",
+      "action": "review.submit",
+      "target_type": "version",
+      "target_id": "doc-coupon-usage-v2",
+      "before_state": "{\"status\": \"draft\"}",
+      "after_state": "{\"status\": \"submitted\"}",
+      "comment": "",
+      "created_at": "2026-10-21T14:50:10+00:00"
+    },
+    {
+      "id": 4,
+      "actor": "admin",
+      "action": "review.reject",
+      "target_type": "version",
+      "target_id": "doc-coupon-usage-v2",
+      "before_state": "{\"status\": \"submitted\"}",
+      "after_state": "{\"status\": \"draft\"}",
+      "comment": "演练：补充条款生效说明",
+      "created_at": "2026-10-21T14:50:10+00:00"
+    },
+    {
+      "id": 5,
+      "actor": "admin",
+      "action": "review.submit",
+      "target_type": "version",
+      "target_id": "doc-coupon-usage-v2",
+      "before_state": "{\"status\": \"draft\"}",
+      "after_state": "{\"status\": \"submitted\"}",
+      "comment": "",
+      "created_at": "2026-10-21T14:50:10+00:00"
+    },
+    {
+      "id": 6,
+      "actor": "admin",
+      "action": "review.approve",
+      "target_type": "version",
+      "target_id": "doc-coupon-usage-v2",
+      "before_state": "{\"status\": \"submitted\"}",
+      "after_state": "{\"status\": \"approved\"}",
+      "comment": "演练：复核通过",
+      "created_at": "2026-10-21T14:50:10+00:00"
+    },
+    {
+      "id": 7,
+      "actor": "admin",
+      "action": "release.published",
+      "target_type": "release",
+      "target_id": "rel-0003",
+      "before_state": null,
+      "after_state": "{\"release_no\": 3, \"status\": \"stable\", \"version_ids\": [\"doc-coupon-usage-v2\"], \"gray_percent\": 0, \"superseded\": [\"rel-0001\", \"rel-0002\"]}",
+      "comment": "E2E 演练：usage 改期条款全量发布",
+      "created_at": "2026-10-21T14:50:10+00:00"
+    },
+    {
+      "id": 8,
+      "actor": "admin",
+      "action": "review.submit",
+      "target_type": "version",
+      "target_id": "doc-coupon-refund-v2",
+      "before_state": "{\"status\": \"draft\"}",
+      "after_state": "{\"status\": \"submitted\"}",
+      "comment": "",
+      "created_at": "2026-10-21T14:50:10+00:00"
+    },
+    {
+      "id": 9,
+      "actor": "admin",
+      "action": "review.approve",
+      "target_type": "version",
+      "target_id": "doc-coupon-refund-v2",
+      "before_state": "{\"status\": \"submitted\"}",
+      "after_state": "{\"status\": \"approved\"}",
+      "comment": "演练：灰度放行",
+      "created_at": "2026-10-21T14:50:10+00:00"
+    },
+    {
+      "id": 10,
+      "actor": "admin",
+      "action": "release.published",
+      "target_type": "release",
+      "target_id": "rel-0004",
+      "before_state": null,
+      "after_state": "{\"release_no\": 4, \"status\": \"candidate\", \"version_ids\": [\"doc-coupon-refund-v2\"], \"gray_percent\": 0, \"superseded\": []}",
+      "comment": "E2E 演练：退款冷静期灰度",
+      "created_at": "2026-10-21T14:50:10+00:00"
+    },
+    {
+      "id": 11,
+      "actor": "admin",
+      "action": "release.gray_configured",
+      "target_type": "release",
+      "target_id": "rel-0004",
+      "before_state": "{\"gray_whitelist\": [], \"gray_percent\": 0}",
+      "after_state": "{\"gray_whitelist\": [\"driver-e2e-gray\"], \"gray_percent\": 10}",
+      "comment": "调整灰度配置",
+      "created_at": "2026-10-21T14:50:10+00:00"
+    },
+    {
+      "id": 12,
+      "actor": "driver-e2e-rbac",
+      "action": "rbac.denied",
+      "target_type": "query",
+      "target_id": "e2e-rbac",
+      "before_state": null,
+      "after_state": "{\"role\": \"driver\", \"leaked_chunk_ids\": [\"internal-refund-playbook-s1\"], \"leaked_audiences\": [\"internal\"]}",
+      "comment": "RBAC 最终断言拦截越权知识片段",
+      "created_at": "2026-10-21T14:50:10+00:00"
+    },
+    {
+      "id": 13,
+      "actor": "admin",
+      "action": "release.rolled_back",
+      "target_type": "release",
+      "target_id": "rel-0004",
+      "before_state": "{\"status\": \"candidate\"}",
+      "after_state": "{\"status\": \"rolled_back\", \"kind\": \"candidate_discarded\"}",
+      "comment": "E2E 演练：灰度结束放弃",
+      "created_at": "2026-10-21T14:50:10+00:00"
+    }
+  ]
+}

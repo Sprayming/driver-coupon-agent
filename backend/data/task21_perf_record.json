@@ -1,0 +1,64 @@
+{
+  "generated_at": "2026-10-21T14:50:21+00:00",
+  "environment": {
+    "embedding": "local bge-small-zh-v1.5（真实向量，离线）",
+    "chat_llm": "mock（规避平台限流；成本为本地估算口径）",
+    "question": "这卡买完还没使，能退不"
+  },
+  "scenarios": {
+    "baseline_all_switches_off": {
+      "latency_ms": 615.7,
+      "cache_hit": false,
+      "answer_path": "answer_with_citations",
+      "cost": {
+        "prompt_tokens": 361,
+        "answer_tokens": 9,
+        "total_tokens": 370,
+        "token_source": "local_estimate",
+        "usage_details": {},
+        "estimated_input_cost_cny": 0.000361,
+        "estimated_output_cost_cny": 1.8e-05,
+        "estimated_total_cost_cny": 0.000379,
+        "context_chars": 880,
+        "pricing_note": "模型平台未返回 usage 时使用本地 estimate_tokens 兜底；真实账单以平台计费为准。"
+      }
+    },
+    "fusion_all_switches_on": {
+      "latency_ms": 298.2,
+      "cache_hit": false,
+      "answer_path": "answer_with_citations",
+      "fusion_sub_queries": [
+        "卡券买完未使用，可以退款吗 退款申请条件 不支持退款情形 退款申请流程 退款到账时效 已核销"
+      ],
+      "cost": {
+        "prompt_tokens": 361,
+        "answer_tokens": 9,
+        "total_tokens": 370,
+        "token_source": "local_estimate",
+        "usage_details": {},
+        "estimated_input_cost_cny": 0.000361,
+        "estimated_output_cost_cny": 1.8e-05,
+        "estimated_total_cost_cny": 0.000379,
+        "context_chars": 879,
+        "pricing_note": "模型平台未返回 usage 时使用本地 estimate_tokens 兜底；真实账单以平台计费为准。"
+      }
+    },
+    "retrieval_cache_hit": {
+      "latency_ms": 2.2,
+      "cache_hit": true,
+      "answer_path": "answer_with_citations",
+      "cost": {
+        "prompt_tokens": 361,
+        "answer_tokens": 9,
+        "total_tokens": 370,
+        "token_source": "local_estimate",
+        "usage_details": {},
+        "estimated_input_cost_cny": 0.000361,
+        "estimated_output_cost_cny": 1.8e-05,
+        "estimated_total_cost_cny": 0.000379,
+        "context_chars": 879,
+        "pricing_note": "模型平台未返回 usage 时使用本地 estimate_tokens 兜底；真实账单以平台计费为准。"
+      }
+    }
+  }
+}

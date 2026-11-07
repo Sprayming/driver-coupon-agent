@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+course.env
+*.local
+chroma_db/
+.trae/
+.screenshots/
+logs/
+*.log
+周明-简历-草稿.md
+node_modules/
+dist/
+.DS_Store
