@@ -1,14 +1,16 @@
 """Task 16 验证：发布质量门禁接线（TR-16.1）。
 
 TR-16.1：GATE_ENABLED=True 时，坏版本被 gate 拦截，好版本放行。
-直接测试 run_release_gate 函数（避免事务回滚干扰审计事件验证）。
+TR-16.2：门禁阻断时 gate.blocked 审计必须落库——它不能和业务事务一起回滚。
 """
 
 from __future__ import annotations
 
 import pytest
 
+from api.schemas import ReleaseCreateRequest
 from config import settings
+from store import releases
 from store import repository as repo
 from store.db import transaction
 from store.gate import run_release_gate
@@ -113,3 +115,57 @@ def test_tr16_1_gate_allows_good_version(db_with_seed, monkeypatch):
     if gate.mode == "quality_eval":
         for f in gate.failures:
             assert "forbidden" not in f.reason, f"好版本不应有 forbidden 拦截: {f}"
+
+
+def test_tr16_2_gate_blocked_audit_survives_rollback(db_with_seed, monkeypatch):
+    """门禁阻断时，gate.blocked 审计必须落库，且不能有任何 release 数据落库。
+
+    回归点：审计曾写在业务事务内部，raise 触发 rollback 后一起被撤销（审计=0 条）。
+    """
+
+    monkeypatch.setattr(settings, "GATE_ENABLED", True)
+    monkeypatch.setattr(settings, "BM25_ENABLED", False)
+    _patch_embeddings(monkeypatch)
+
+    bad_content = """# 退款规则
+
+## 特批工单统一使用 TB- 前缀编号
+由值班主管工号开立。内部操作手册内容。
+"""
+    with transaction(db_with_seed) as conn:
+        repo.insert_version(
+            conn,
+            version_id="ver-bad-audit",
+            doc_id="doc-coupon-refund",
+            version_no=99,
+            content_md=bad_content,
+            content_hash="hash-bad-audit",
+            status="approved",
+            audience="driver",
+            created_by="editor-a",
+        )
+
+    with transaction(db_with_seed) as conn:
+        release_no_before = repo.max_release_no(conn)
+
+    with pytest.raises(releases.GateBlockedError):
+        releases.publish_release(
+            ReleaseCreateRequest(version_ids=["ver-bad-audit"], label="坏版本发布"),
+            actor="publisher-a",
+            db_path=db_with_seed,
+        )
+
+    with transaction(db_with_seed) as conn:
+        blocked = [
+            row for row in repo.list_audit_events(conn, limit=50)
+            if row["action"] == "gate.blocked"
+        ]
+        assert len(blocked) == 1, "门禁阻断必须留下一条 gate.blocked 审计"
+        assert blocked[0]["actor"] == "publisher-a", "审计 actor 必须取自调用方身份"
+        assert "failures" in blocked[0]["after_state"]
+
+        # 门禁在任何 release 数据落库之前阻断，不能新增快照（seed 自带的两个 release 不受影响）。
+        assert repo.max_release_no(conn) == release_no_before
+        # 版本状态不能被改成 published。
+        version = repo.get_version(conn, "ver-bad-audit")
+        assert version["status"] == "approved"

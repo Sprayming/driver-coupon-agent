@@ -2,31 +2,31 @@
 
 from __future__ import annotations
 
+import logging
+
 from typing import Any, Dict, List, Optional, Union
 
 from langchain.agents import create_agent
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
-from api.schemas import ChatRequest, ChatResponse, Intent, IntentResult, KnowledgeHit, Citation, RetrievalCacheEntry, RerankOutcome, BusinessFactNeed, BusinessFactResult, ToolAction, ToolCallRecord, ToolObservation, ClarificationPlan, ClarificationRequest, CostSummary
+from api.schemas import ChatRequest, ChatResponse, Intent, IntentResult, RetrievalCacheEntry, RerankOutcome, BusinessFactNeed, BusinessFactResult, ToolAction, ToolCallRecord, ToolObservation, ClarificationPlan, ClarificationRequest, CostSummary
 
 from models.llm_client import call_chat_model, create_tool_calling_model
-# L15：向量召回之外新增关键词通道和 hybrid 融合，都住在 vector_store。
-from rag.vector_store import retrieve_by_vector, get_vector_store, merge_candidates, keyword_retrieve, merge_hybrid_hits
-# Task 13：BM25 硬关键词专路。
-from rag.search_engine import BM25Local, SearchEngine
-# Task 14：RAG-Fusion 多查询 + RRF 融合。
-from rag.fusion import generate_sub_queries, rrf_fuse
+# L41 对齐：回答 prompt 统一由 Prompt Registry 选择，Agent 不再硬编码 system prompt。
+from models.answer_client import build_answer_messages, compose_answer
+# L41 对齐：混合检索收口到单一门面，Agent 不再直接依赖三路召回实现。
+from rag.hybrid_retrieval import get_vector_store, normalize_query, retrieve_knowledge
 from rag.prompting import render_vector_rag_messages
+from rag.knowledge import citations_from_hits, general_chat_result, low_confidence_result
 from embeddings.client import EmbeddingClient
-from cost.observer import build_cost_summary
+from cost.governance import build_cost_summary, budget_warning
 from config import settings
 from config.settings import (
     DEFAULT_EMBEDDING_BASE_URL,
     DEFAULT_EMBEDDING_MODEL,
     LOW_CONFIDENCE_THRESHOLD,
     RETRIEVAL_SCORE_THRESHOLD,
-    TOP_K,
     # L14：宽召回候选池大小 + 重排后真正喂给回答的条数。
     CANDIDATE_K,
     FINAL_TOP_K,
@@ -34,12 +34,10 @@ from config.settings import (
 from rag.quality import is_low_confidence, get_quality_summary, peek_quality_summary
 # L13：意图分类抽到 rag/intent（质量评测也要用，避免循环导入）；查询改写是本课核心。
 from rag.intent import classify_intent
-from rag.query_rewrite import normalize_query, rewrite_retrieval_query
-# L14：reranker 精排独立成模块，只吃候选列表、只吐排序结果，不侵入召回层。
-from rag.reranker import rerank_candidates
+from rag.query_rewrite import rewrite_retrieval_query
 # L15：检索前计划，复用意图和改写结果，产出场景路由 + 主题范围 + 关键词通道用词。
 # L16：planning 再加实时业务问题识别（缓存边界 + 保守回答分支的判断依据）。
-from rag.planning import pre_retrieval_plan
+from rag.planning import pre_retrieval_plan, widen_topics_for_domains
 # L16：索引确认 + 检索缓存（版本指纹 / 缓存策略 / LRU 读写）。
 # Task 9：get_release_index 按 release 构建并缓存索引。
 from rag.index_cache import (
@@ -66,7 +64,7 @@ from tools.contracts import TOOL_SPECS
 from tools.catalog import DRIVER_TOOL_CATALOG
 # L24：MCP 客户端——按配置发现 Server、握手、拉工具池、按命名空间路由调用。
 from mcp_client.manager import MCPClientManager
-from tools.langchain_tools import build_langchain_tools, tool_action_reason
+from tools.langchain_runtime import build_langchain_tools, tool_action_reason
 # L19：工具澄清——LLM 产出 ClarificationPlan 草案，后端校验后决定「先反问」还是「调工具」。
 from models.clarification_planner import ClarificationPlannerModelClient
 from tools.clarification_planning import (
@@ -79,7 +77,7 @@ from tools.tool_runtime import execute_tool_action
 # L20：Observation 压缩层——工具原始结果不能直接进模型，先压缩成安全 Observation。
 from observability.observation import build_observation
 # L21：错误降级——高风险写操作拦截 + 工具超时/模型不可用兜底。
-from degradation.fallbacks import fallback_answer, classify_risk, ModelServiceError
+from degradation.fallbacks import fallback_answer, ModelServiceError
 # L23：Hooks 治理层——pre/post/error/completion 统一卡口。
 from hooks.manager import HookManager
 from api.schemas import ErrorCategory, DegradationState, Observation as _Observation
@@ -89,46 +87,49 @@ from planner.task_planner import TaskPlanner
 from policies.refund_policy import assess_refund_boundary, BLOCKED_WRITE_ACTIONS
 # L32-L34：Session Memory + 上下文构建——多轮对话记忆 + 澄清闭环
 from context.builder import (
+    build_context,
     consume_pending_clarification,
-    find_context_coupon,
     remember_pending_clarification,
     update_memory,
 )
 # L27-L29：LangGraph 退款审批 Workflow + L30 HITL resume
-from workflows.refund_graph import run_refund_approval
+from workflows.after_sale_graph import run_refund_approval, build_thread_id, has_pending_approval
 # L36：Prompt Injection 防御 + 工具结果安全检查
-from safety.source_guard import inspect_tool_result
+from safety.source_guard import inspect_source, inspect_tool_result
+
+import re
 
 import httpx
 
+logger = logging.getLogger(__name__)
 
-def build_citations(hits:list[KnowledgeHit])-> list[Citation]:
-    """将检索到的知识片段转换为引用格式"""
-    return [
-        Citation(
-            citation_id=f"C{index}",
-            source_path=hit.chunk.source_path,
-            source_title=hit.chunk.title,
-            chunk_id=hit.chunk.chunk_id,
-            score=hit.score,
-            snippet=hit.chunk.text,
-        )
-        for index, hit in enumerate(hits, start=1)
-    ]
 
-# def build_fallback_answer () -> str :
-#     """没有可靠命中时生成固定兜底回答。""" 
-#     return ( "我暂时没有在当前知识库里找到可靠依据，不能直接给出规则结论。" "如果你有其他问题，请告诉我，我会尽力帮你。")
-def build_fallback_answer() -> str:
-    """低置信或无可靠依据时的兜底回答。"""
-    return (
-        "我现在没有找到足够可靠的卡券规则依据，不能直接给出结论。"
-        "请你补充卡券类型、购买时间或订单状态；如果涉及退款争议，我可以帮你转人工继续核验。"
-    )
+# 高风险退款分支从用户消息里抽编号：必须带前缀，且前后不能紧邻字母数字。
+# 裸数字会把卡券号里的数字段（CP-20261015-001 → 20261015）误当成订单号，
+# 而 "CP-20261015-001" 本体也会被 \b 截断成 "CP-20261015"。
+_COUPON_ID_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_-])CP[-_]?[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*(?![A-Za-z0-9_-])",
+    re.IGNORECASE,
+)
+_ORDER_ID_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_-])(?:ORD[-_]?\d{4,}|O[-_]\d{4,}|订单\s*[-_]?\s*\d{4,})(?![A-Za-z0-9_-])",
+    re.IGNORECASE,
+)
 
-def build_general_chat_answer () -> str : 
-    """普通客服寒暄不需要 RAG 依据。""" 
-    return ( "你好，我是网约车司机端卡券客服 Agent。你可以直接描述卡券购买、使用、退款或投诉问题；" "涉及具体规则时，我会优先依据当前知识库回答，找不到可靠依据时不会编造。" )
+
+def find_coupon(coupons: list[dict], coupon_id: str) -> dict | None:
+    """按卡券号精确匹配；匹配不到返回 None。
+
+    不拿列表第一条兜底——查不到就是查不到，交给策略层判 blocked，
+    否则会拿另一张券的状态给出错误结论。
+    """
+
+    for coupon in coupons:
+        raw_id = coupon.get("coupon_id") or coupon.get("couponId")
+        if str(raw_id or "").upper() == coupon_id.upper():
+            return coupon
+    return None
+
 
 def build_clarification_answer(clarification: ClarificationRequest) -> str:
     """把结构化澄清请求渲染成确定性问句。
@@ -202,7 +203,8 @@ class CustomerServiceAgent:
         产生 ToolMessage。工具执行收口到 execute_tool_action（三道安全闸）。
         返回的 tool_calls 是调试台观察格式，从 LangChain 消息整理而来。
         """
-        from tools.langchain_tools import build_langchain_tools as _build
+        from tools.langchain_runtime import build_langchain_tools as _build
+        from tools.langchain_runtime import render_tool_system_prompt
 
         tools = _build(request)
         try:
@@ -214,12 +216,8 @@ class CustomerServiceAgent:
         langchain_agent = create_agent(
             model=model,
             tools=tools,
-            system_prompt=(
-                "你是网约车司机端卡券客服 Agent。需要查询司机活动完成度、单量、活动资格、"
-                "退款进度、卡券状态、核销记录或收入统计等实时业务事实时，必须优先调用给定工具确认事实。"
-                "不要编造单量、达标状态、退款金额或卡券数量。"
-                "工具执行前后都由后端校验参数和当前司机身份，你只能调当前司机自己的工具。"
-            ),
+            # system prompt 来自 Prompt Registry（tool_usage + prompt_security + 角色边界）。
+            system_prompt=render_tool_system_prompt(),
         )
         result = langchain_agent.invoke(
             {"messages": [{"role": "user", "content": request.user_message}]},
@@ -287,15 +285,25 @@ class CustomerServiceAgent:
         # L37: 全链路 Trace——每个关键阶段都写事件
         from observability.trace import get_trace_store
         trace_store = get_trace_store()
+        # L37/L41：外部来源安全报告收集器——本轮所有 user_message / tool_result / rag_document
+        # 的检查结果都汇总到这里，最后只写一条 context_source_safety_checked 事件。
+        safety_reports: list[dict] = []
+        # L41 对齐：用户输入也按来源检查——不可信文本不能伪装成系统指令
+        _input_safe, _input_reason = inspect_source(request.user_message)
+        safety_reports.append({
+            "source": "user_message",
+            "tainted": not _input_safe,
+            "reason": _input_reason,
+        })
+        # L41 对齐：用户输入是否安全不在入口早退，而是交给意图路由判定——
+        # classify_intent 命中注入特征时返回 security_request，响应侧统一拒答。
         # L23: 初始化 Hooks 治理管理器
         hooks = HookManager()
         # L25: 初始化 TaskPlanner（路由规划）
         task_planner = TaskPlanner()
         # L23: 主链路 return 前统一赋值；高风险提前 return 分支会自己覆盖这个 None
         hooks_on_completion = None
-        # L25/L26: 路由规划 + 高风险评估，在分支判断前统一计算
-        route_plan = None
-        planner_trace = None
+        # L26: 高风险评估在分支判断前统一计算
         risk_assessment = None
 
         # 1. 会话计数
@@ -323,6 +331,48 @@ class CustomerServiceAgent:
             "classified_intent": intent_result.intent,
         })
 
+        # 2.0.1 L41 对齐（响应侧）：路由侧判出 security_request 后，由这里统一拒答。
+        #   放在澄清消费之前，拦截轮不消费也不覆盖上一轮的 pending_clarification；
+        #   同时不检索、不调工具、不调模型。
+        if intent_result.intent == "security_request":
+            answer = "我不能提供系统提示词、隐藏推理、工具细节或内部策略。请用正常方式描述你的卡券问题。"
+            trace_store.add(request.session_id, "prompt_security_blocked", {
+                "session_id": request.session_id,
+                "intent": intent_result.intent,
+                "risk_level": "high",
+                "status": "blocked",
+                # 以下是 driver 侧补充的可观测字段（L41 无，用于定位命中原因）。
+                "source": "user_message",
+                "reason": _input_reason,
+            })
+            return ChatResponse(
+                session_id=request.session_id,
+                answer=answer,
+                intent=intent_result.intent,
+                intent_result=intent_result,
+                citations=[],
+                cost_summary=build_cost_summary([], answer, None),
+                reasoning_summary=[
+                    "路由侧将消息判为 security_request，响应侧直接拒答，不检索、不调工具、不调模型。"
+                ],
+                session_state={
+                    "agent_version": "driver-coupon-L41-security-request",
+                    "message_count": message_count,
+                    "answer_path": "security_request",
+                    "source_safety": {
+                        "tainted": True,
+                        "tainted_sources": sorted(
+                            {report["source"] for report in safety_reports if report["tainted"]}
+                        ),
+                        "reports": safety_reports,
+                    },
+                },
+                tool_calls=[],
+                risk_level="high",
+                needs_human_approval=False,
+                degraded=False,
+            )
+
         # 2.1 L32-L34：Session Memory 澄清消费——上一轮让用户补参数，这一轮用户补了？
         #   consume_pending_clarification 会检查 pending_clarification 是否过期/被取代/补完。
         #   如果补完了，返回上一轮的真实意图（覆盖这一轮可能不准的 classify_intent 结果）。
@@ -331,7 +381,7 @@ class CustomerServiceAgent:
         import re as _re
         _coupon_match = _re.search(r'CP\d{6,}', normalized_message)
         explicit_coupon_id = _coupon_match.group() if _coupon_match else None
-        resolved_clarification, _clarification_transition = consume_pending_clarification(
+        resolved_clarification, clarification_transition = consume_pending_clarification(
             session_id=request.session_id,
             runtime_user_id=request.runtime_user_id,
             current_intent=intent_result.intent,
@@ -341,6 +391,77 @@ class CustomerServiceAgent:
         if resolved_clarification is not None:
             # 上一轮澄清已解决 → 用恢复的真实意图覆盖 classify_intent 的结果
             intent_result = IntentResult(intent=resolved_clarification["intent"])
+            # L41 对齐：本轮成功消费上一轮 pending_clarification 的 Trace。
+            trace_store.add(request.session_id, "tool_clarification_resolved", {
+                "session_id": request.session_id,
+                "intent": intent_result.intent,
+                "required_field": (resolved_clarification.get("required_fields") or [None])[0],
+            })
+        elif clarification_transition and clarification_transition.get("reason") == "expired":
+            # L41 对齐：上一轮澄清超过轮次窗口仍未补参 → 记录过期 Trace，本轮按新消息正常处理。
+            trace_store.add(request.session_id, "tool_clarification_expired", {
+                "session_id": request.session_id,
+                "intent": clarification_transition.get("intent"),
+                "required_fields": clarification_transition.get("required_fields", []),
+                "age": clarification_transition.get("age"),
+            })
+
+        # 2.1.1 L41 对齐：身份直答——司机问自身身份/等级/权益时直接读 Runtime Context。
+        #   必须放在 build_context / TaskPlanner 路由之前：身份问题不需要检索、工具或模型。
+        if intent_result.intent == "runtime_identity":
+            driver_name = request.runtime_driver_name or "未知"
+            driver_level = request.runtime_driver_level or "未知"
+            answer = (
+                f"你当前登录的司机是 {driver_name}（司机 ID：{request.runtime_user_id}），"
+                f"账号等级是 {driver_level}。"
+                "这些信息来自本轮请求的 Runtime Context，不来自聊天内容。"
+            )
+            trace_store.add(request.session_id, "runtime_identity_answered", {
+                "session_id": request.session_id,
+                "user_id": request.runtime_user_id,
+                "driver_name": driver_name,
+                "driver_level": driver_level,
+            })
+            return ChatResponse(
+                session_id=request.session_id,
+                answer=answer,
+                intent=intent_result.intent,
+                intent_result=intent_result,
+                citations=[],
+                cost_summary=build_cost_summary([], answer, None),
+                reasoning_summary=[
+                    "身份问题直接读取 Runtime Context，不调工具、不检索知识、不调模型。"
+                ],
+                session_state={
+                    "agent_version": "driver-coupon-L41-runtime-identity",
+                    "message_count": message_count,
+                    "answer_path": "runtime_identity",
+                    "runtime_context": {
+                        "user_id": request.runtime_user_id,
+                        "driver_name": request.runtime_driver_name,
+                        "driver_level": request.runtime_driver_level,
+                    },
+                },
+                tool_calls=[],
+                risk_level="low",
+                needs_human_approval=False,
+                degraded=False,
+            )
+
+        # 2.2 L34/L35 对齐 L41：显式 > Runtime Context > Session Memory 选卡券，
+        #     同时对历史消息做窗口压缩 + 脱敏，产出可审计的上下文报告。
+        context_coupon_id, context_report, compression_report = build_context(
+            request, explicit_coupon_id
+        )
+        # L41 对齐：把上下文构建阶段检查过的 history_messages 报告并入本轮安全汇总，
+        # 保证 context_source_safety_checked 能覆盖 user_message / history / tool / rag 四类来源。
+        for _report in (context_report.get("source_safety") or {}).get("reports", []):
+            if _report.get("source") == "history_messages":
+                safety_reports.append({
+                    "source": "history_messages",
+                    "tainted": bool(_report.get("tainted")),
+                    "reason": _report.get("reason", ""),
+                })
 
         # 3. L13 核心：用户原话不动，只为检索生成 rewritten_query。
         rewrite = rewrite_retrieval_query(request.user_message, intent_result.intent)
@@ -349,19 +470,31 @@ class CustomerServiceAgent:
         #    注意执行顺序较 L14 有调整：plan 必须在两路向量召回之前生成（召回要带主题过滤），
         #    所以 raw_hits 的计算从「改写之前」挪到「plan 之后」，语义不变（原话基线，独立检索）。
         plan = pre_retrieval_plan(request.user_message, intent_result, rewrite)
+        # L41 对齐：检索前计划完成后记录计划原因与真正用于检索的 query。
+        trace_store.add(request.session_id, "rag_pre_retrieved", {
+            "session_id": request.session_id,
+            "intent": intent_result.intent,
+            "query": rewrite.rewritten_query,
+            "plan_reason": plan.reason,
+        })
 
         # 4.1 L25: TaskPlanner 路由规划——把硬编码分支判断抽象成可校验的 RoutePlan。
         #    plan_by_rules 用司机域词表生成高置信决策，confidence >= 0.85 直接返回。
         #    route_plan.needs_business_tools 替代原来的 driver_domain_realtime。
-        import asyncio
-        try:
-            route_plan, planner_trace = asyncio.run(
-                task_planner.plan(request.user_message, request.runtime_context or {})
-            )
-        except Exception:
-            # TaskPlanner 失败时降级为通用兜底，不让规划异常阻断聊天。
-            route_plan = None
-            planner_trace = None
+        route_plan, planner_trace = task_planner.plan(
+            request.user_message, request.runtime_context or {}
+        )
+        # 模型候选补充的知识域折算成检索主题：只放宽、不收窄（场景基线仍由代码决定）。
+        plan = widen_topics_for_domains(plan, route_plan.knowledge_domains)
+        # L41 对齐：路由计划生成后的 Trace（字段直接取 RoutePlan 真实属性）。
+        trace_store.add(request.session_id, "route_plan_built", {
+            "session_id": request.session_id,
+            "intent": route_plan.intent,
+            "needs_business_tools": route_plan.needs_business_tools,
+            "needs_rag": route_plan.needs_rag,
+            "risk_level": route_plan.risk_level,
+            "fallback_policy": route_plan.fallback_policy,
+        })
 
         # 4.5 L16：索引确认。知识库内容的 sha256 指纹是本轮所有缓存的「身份证」。
         # Task 9：生命周期开关开启时，按 runtime_user_id 解析灰度路由，
@@ -384,34 +517,25 @@ class CustomerServiceAgent:
 
         # 4.6 L17 → L25：实时业务问题识别。
         # L25 用 route_plan.needs_business_tools 替代原来的 driver_domain_realtime。
-        # route_plan 不可用时回退到 L17 的 detect_business_fact_need（兼容降级）。
         business_fact_need: BusinessFactNeed = detect_business_fact_need(request)
-        driver_domain_realtime = (
-            route_plan.needs_business_tools
-            if route_plan is not None
-            else business_fact_need.requires_realtime
-        )
+        driver_domain_realtime = route_plan.needs_business_tools
 
-        # L21 → L25：风险等级优先取 route_plan.risk_level（TaskPlanner 统一口径），
-        # route_plan 不可用时回退到 L21 classify_risk。
-        risk_level = (
-            route_plan.risk_level
-            if route_plan is not None
-            else classify_risk(intent_result.intent, request.user_message)
-        )
+        # L21 → L25：风险等级统一取 route_plan.risk_level（TaskPlanner 单一口径）。
+        risk_level = route_plan.risk_level
         degradation = DegradationState(degraded=False, error_category="none")
 
         # L26：高风险退款/补偿诉求——先做资格判断，不直接转人工，也不执行写动作。
         # 用 route_plan.requires_workflow 判断是否进入受控售后路径。
-        requires_workflow = (
-            route_plan.requires_workflow if route_plan is not None else risk_level == "high"
-        )
+        requires_workflow = route_plan.requires_workflow
         if requires_workflow:
-            # 提取卡券号 / 订单号（从用户消息）
-            import re
-            coupon_id_match = re.search(r"\bCP[-_]?\d{2,}\b", request.user_message, re.IGNORECASE)
-            order_id_match = re.search(r"\b(?:订单|ORD)?[-_]?\d{6,}\b", request.user_message)
-            coupon_id = coupon_id_match.group(0) if coupon_id_match else None
+            # 提取卡券号 / 订单号（从用户消息）。两个正则都强制带前缀，
+            # 避免把卡券号里的数字段当成订单号。
+            # L34：显式编号缺失时，上下文构建器会按 Runtime Context / Session Memory 补卡券。
+            coupon_id_match = _COUPON_ID_PATTERN.search(request.user_message)
+            order_id_match = _ORDER_ID_PATTERN.search(request.user_message)
+            coupon_id = (
+                coupon_id_match.group(0) if coupon_id_match else context_coupon_id
+            )
             order_id = order_id_match.group(0) if order_id_match else None
 
             # 有卡券号时尝试查卡券状态（只读工具，不执行写动作）
@@ -429,23 +553,38 @@ class CustomerServiceAgent:
                     )
                     if spec:
                         hooks.pre_tool_call(action, request, spec)
+                    # L41 对齐：工具调用生命周期的开始/结束 Trace。
+                    trace_store.add(request.session_id, "tool_started", {
+                        "session_id": request.session_id,
+                        "tool_name": action.tool_name,
+                    })
                     tool_obs = execute_tool_action(action, request)
+                    trace_store.add(request.session_id, "tool_finished", {
+                        "session_id": request.session_id,
+                        "tool_name": action.tool_name,
+                        "status": tool_obs.status if tool_obs else "none",
+                    })
                     # L36: 工具结果安全检查——防止 Prompt Injection 通过工具结果注入
                     if tool_obs and tool_obs.status == "success":
                         is_safe, _reason = inspect_tool_result(tool_obs.data)
+                        # L41 对齐：只收集报告，本轮结束统一写一条 context_source_safety_checked
+                        safety_reports.append({
+                            "source": "tool_result",
+                            "tainted": not is_safe,
+                            "reason": _reason,
+                        })
                         if not is_safe:
                             tool_obs = None  # 不安全的结果直接丢弃，不进后续逻辑
                     if tool_obs and tool_obs.status == "success":
-                        # 从工具返回里找该卡券的状态
+                        # 从工具返回里找该卡券的状态；匹配不到就保持 None（→ blocked），
+                        # 绝不拿列表第一条顶替，否则会拿另一张券的状态给出错误结论。
                         coupons = tool_obs.data.get("coupons", [])
-                        for c in coupons:
-                            if str(c.get("coupon_id", "")).upper() == coupon_id.upper():
-                                coupon_status = c.get("status")
-                                verified_at = c.get("verified_at")
-                                break
-                        if coupon_status is None and coupons:
-                            coupon_status = coupons[0].get("status")
-                            verified_at = coupons[0].get("verified_at")
+                        matched = find_coupon(coupons, coupon_id) if coupon_id else None
+                        if matched is not None:
+                            coupon_status = matched.get("status")
+                            verified_at = (
+                                matched.get("verified_at") or matched.get("verifiedAt")
+                            )
                     raw_obs = build_observation(tool_obs) if tool_obs else None
                     if raw_obs:
                         safe_obs = hooks.post_tool_call(raw_obs)
@@ -456,10 +595,22 @@ class CustomerServiceAgent:
             # L27-L29: 评估退款资格边界——跑 LangGraph 退款审批图
             #   run_refund_approval 内部调 assess_refund_boundary（逻辑一致），
             #   如果 LangGraph 可用且需要人工审批 → 图会在 pause_for_human_approval 处 interrupt
+            workflow_thread_id = build_thread_id(request.session_id, coupon_id)
             risk_assessment = run_refund_approval(
                 coupon_id=coupon_id or "",
                 coupon_status=coupon_status,
-                thread_id=request.session_id,
+                # 线程键带卡券号：同一会话里不同券各自挂起，不会串结论。
+                thread_id=workflow_thread_id,
+                verified_at=verified_at,
+                # 只给订单号时也要传进去，否则策略层会当成「缺编号」反复追问。
+                order_id=order_id,
+                runtime_user_id=request.runtime_user_id,
+            )
+            # 只有 checkpoint 真的挂起了，才能对用户说“已进入审批”。
+            # LangGraph 不可用 / checkpointer 建失败时不会留下挂起状态。
+            approval_started = (
+                risk_assessment.eligibility_status == "eligible_for_application"
+                and has_pending_approval(workflow_thread_id)
             )
             # L37: 记录退款 Workflow Trace
             trace_store.add(request.session_id, "refund_workflow", {
@@ -468,16 +619,43 @@ class CustomerServiceAgent:
                 "eligibility_status": risk_assessment.eligibility_status,
                 "needs_human_approval": risk_assessment.needs_human_approval,
             })
+            # L41 对齐：LangGraph 执行返回后的节点级与整体完成 Trace。
+            # driver 的 run_refund_approval 只返回 HighRiskAssessment，不暴露节点清单，node 记 None。
+            trace_store.add(request.session_id, "workflow_node_finished", {
+                "session_id": request.session_id,
+                "node": None,
+                "status": "completed",
+            })
+            trace_store.add(request.session_id, "workflow_completed", {
+                "session_id": request.session_id,
+                "workflow_status": risk_assessment.eligibility_status,
+                "needs_human_approval": risk_assessment.needs_human_approval,
+            })
+            if risk_assessment.needs_human_approval:
+                trace_store.add(request.session_id, "human_approval_required", {
+                    "session_id": request.session_id,
+                    "coupon_id": coupon_id,
+                    "risk_level": risk_level,
+                })
 
             # 根据资格状态生成回答
             if risk_assessment.eligibility_status == "eligible_for_application":
                 target = coupon_id or order_id or "该卡券"
                 reason_text = risk_assessment.reasons[0]
-                answer = (
-                    f"关于 {target} 的退款申请：{reason_text} "
-                    "我不会因为你一句『帮我退』就直接执行退款；后续必须进入受控审批流程。"
-                )
-                next_action = "route_to_controlled_workflow"
+                if approval_started:
+                    answer = (
+                        f"关于 {target} 的退款申请：{reason_text} "
+                        "我不会因为你一句『帮我退』就直接执行退款；后续必须进入受控审批流程。"
+                    )
+                    next_action = "route_to_controlled_workflow"
+                else:
+                    # 资格够但审批通道没起来：如实告知，不能装作已受理。
+                    answer = (
+                        f"关于 {target} 的退款申请：{reason_text} "
+                        "但当前审批通道不可用，我没有把这单送进审批；"
+                        "请稍后重试，或直接联系人工客服处理。"
+                    )
+                    next_action = "transfer_to_human"
             elif risk_assessment.eligibility_status == "needs_clarification":
                 # L32：写入 Session Memory，下一轮用户补卡券号后 consume_pending_clarification 会恢复原意图
                 remember_pending_clarification(
@@ -494,12 +672,24 @@ class CustomerServiceAgent:
                 next_action = "ask_clarification"
             else:
                 target = coupon_id or order_id or "该卡券"
+                # L41 对齐：资格判定为阻断（blocked / not_eligible）的 Trace。
+                trace_store.add(request.session_id, "refund_eligibility_blocked", {
+                    "session_id": request.session_id,
+                    "coupon_id": coupon_id,
+                    "eligibility_status": risk_assessment.eligibility_status,
+                    "reasons": risk_assessment.reasons[:2],
+                })
                 answer = (
                     f"关于 {target} 的退款：{risk_assessment.reasons[0]}"
                     "我只能解释依据并建议转人工复核，不执行任何写动作。"
                 )
                 next_action = "transfer_to_human"
 
+            # L41 对齐：高风险边界分支不调模型，只给确定性话术。
+            trace_store.add(request.session_id, "model_answer_skipped", {
+                "session_id": request.session_id,
+                "reason": "high_risk_boundary_no_model_call",
+            })
             degradation = DegradationState(
                 degraded=True,
                 error_category="high_risk_write_blocked",
@@ -509,6 +699,25 @@ class CustomerServiceAgent:
             hooks_on_completion = hooks.on_completion(
                 next_action=next_action, risk_level="high", degradation=degradation
             )
+            # L41 对齐：降级状态、Hooks 事件与最终回答 Trace。
+            trace_store.add(request.session_id, "degradation_triggered", {
+                "session_id": request.session_id,
+                "degraded": degradation.degraded,
+                "reason": degradation.error_category,
+            })
+            for _hook_event in hooks.events:
+                trace_store.add(request.session_id, "hook_executed", {
+                    "session_id": request.session_id,
+                    "hook_type": _hook_event.hook_type,
+                    "target_name": _hook_event.target_name,
+                    "status": _hook_event.result,
+                })
+            trace_store.add(request.session_id, "final_answer_generated", {
+                "session_id": request.session_id,
+                "risk_level": "high",
+                "next_action": next_action,
+                "degradation": degradation.degraded,
+            })
             return ChatResponse(
                 session_id=request.session_id,
                 answer=answer,
@@ -531,9 +740,11 @@ class CustomerServiceAgent:
                 session_state={
                     "agent_version": "lesson-26-high-risk-action-boundary",
                     "message_count": message_count,
+                    "context": context_report,
+                    "compression": compression_report,
                     "degradation": degradation.model_dump(),
-                    "route_plan": route_plan.model_dump() if route_plan else None,
-                    "planner_trace": planner_trace.model_dump() if planner_trace else None,
+                    "route_plan": route_plan.model_dump(),
+                    "planner_trace": planner_trace.model_dump(),
                     "risk_assessment": risk_assessment.model_dump(),
                     "hooks": {
                         "events": [e.model_dump() for e in hooks.events],
@@ -567,7 +778,13 @@ class CustomerServiceAgent:
                 "scope": "retrieval_hits_only",
                 "reason": "司机域实时业务事实（活动/单量/资格）不能缓存为知识库答案。",
             }
-        cache_key = cache_key_for(plan, index)
+        # 可见性进缓存 key：命中后不会再走 RBAC 过滤，不带角色范围会跨角色串缓存。
+        cache_key = cache_key_for(
+            plan,
+            index,
+            allowed_kb_ids=allowed_kb_ids,
+            allowed_audiences=allowed_audiences,
+        )
         cached_entry = cache_get(cache_key)
         cache_hit = cache_policy["cacheable"] and cached_entry is not None
 
@@ -590,105 +807,27 @@ class CustomerServiceAgent:
             bm25_hits = []
             fusion_sub_queries = []
         else:
-            # 5. 第一次检索：用户原话，只作改写前的对比基线，raw_hits 不参与回答。
-            # L14：从「只取 top 2」放宽成「按 CANDIDATE_K 宽召回」，让更多候选先进池子再交给 reranker 精排。
-            # L15：再叠加 plan 的主题路由过滤，其他场景的知识不进候选池。
-            # raw_hits = retrieve_by_vector(request.user_message, embedding_client=self._embedding_client)
-            raw_hits = retrieve_by_vector(
-                request.user_message,
-                top_k=CANDIDATE_K,
-                embedding_client=self._embedding_client,
-                allowed_topics=plan.allowed_topics,
+            # L41 对齐：三路召回 + 融合 + 精排统一收口到 rag.hybrid_retrieval.retrieve_knowledge。
+            # 链路细节（向量基线 / 改写召回 / 关键词 / BM25 / RRF / reranker）留在检索层，
+            # Agent 只消费结果，不再自己拼召回。
+            retrieval = retrieve_knowledge(
+                user_message=request.user_message,
+                rewritten_query=rewrite.rewritten_query,
+                plan=plan,
                 index=index,
+                embedding_client=self._embedding_client,
                 allowed_kb_ids=allowed_kb_ids,
                 allowed_audiences=allowed_audiences,
             )
-
-            # 6. 第二次检索：改写后问题，真正用于回答。L14/L15 改动同上。
-            # rewritten_hits = retrieve_by_vector(
-            #     rewrite.rewritten_query, embedding_client=self._embedding_client
-            # )
-            rewritten_hits = retrieve_by_vector(
-                rewrite.rewritten_query,
-                top_k=CANDIDATE_K,
-                embedding_client=self._embedding_client,
-                allowed_topics=plan.allowed_topics,
-                index=index,
-                allowed_kb_ids=allowed_kb_ids,
-                allowed_audiences=allowed_audiences,
-            )
-
-            # 7. L15 新增：关键词通道。用 plan.keyword_terms 撞 chunk 的 keywords/text，
-            #    专补向量召回够不着的长尾精确词（规则编号、稀有业务词）。
-            keyword_hits = keyword_retrieve(
-                plan,
-                embedding_client=self._embedding_client,
-                index=index,
-                allowed_kb_ids=allowed_kb_ids,
-                allowed_audiences=allowed_audiences,
-            )
-
-            # 8. L12 第二道线作用在改写后的分数上。
-            # low_confidence = is_low_confidence(rewritten_hits)
-            # reliable_hits = [] if low_confidence else rewritten_hits
-            # citations = build_citations(reliable_hits)
-            # ↑ 以上是 L13 旧链路（注释保留，不删）：直接拿改写后的检索结果当依据，
-            #   既没有候选池合并，也没有精排，多个相似片段同时召回时 top-k 顺序不精。
-            # ↓ L14/L15 新链路：向量双路合并 → 与关键词通道 hybrid 融合 → reranker 精排
-            #   → 用「重排后的分数」判低置信 → 只取 FINAL_TOP_K 条。
-            #   分工：向量+关键词负责「宽」（互补召回，该进池的别漏），重排负责「精」（进池的排对顺序）。
-            vector_candidates = merge_candidates(raw_hits, rewritten_hits)
-
-            # Task 13：BM25 硬关键词专路（政策编号/商品名精确命中）。
-            bm25_engine: SearchEngine | None = None
-            if settings.BM25_ENABLED:
-                bm25_engine = BM25Local(list(index.chunks_by_id.values()))
-
-            def _bm25_for(query: str) -> list[KnowledgeHit]:
-                if bm25_engine is None:
-                    return []
-                hits = bm25_engine.search(query, top_k=CANDIDATE_K)
-                if allowed_kb_ids is not None or allowed_audiences is not None:
-                    hits = [
-                        h for h in hits
-                        if (allowed_kb_ids is None or not h.chunk.kb_id or h.chunk.kb_id in allowed_kb_ids)
-                        and (allowed_audiences is None or h.chunk.audience in allowed_audiences)
-                    ]
-                return hits
-
-            bm25_hits = _bm25_for(rewrite.rewritten_query)
-
-            # Task 14：RAG-Fusion——多子查询各跑 hybrid 后 RRF 融合。
-            fusion_sub_queries: list[str] = []
-            if settings.RAG_FUSION_ENABLED:
-                fusion_sub_queries = generate_sub_queries(
-                    rewrite.rewritten_query, count=settings.FUSION_QUERY_COUNT
-                )
-                sub_ranked: list[list[KnowledgeHit]] = []
-                for sq in fusion_sub_queries:
-                    sq_vec = retrieve_by_vector(
-                        sq,
-                        top_k=CANDIDATE_K,
-                        embedding_client=self._embedding_client,
-                        allowed_topics=plan.allowed_topics,
-                        index=index,
-                        allowed_kb_ids=allowed_kb_ids,
-                        allowed_audiences=allowed_audiences,
-                    )
-                    sq_kw = keyword_retrieve(
-                        plan,
-                        embedding_client=self._embedding_client,
-                        index=index,
-                        allowed_kb_ids=allowed_kb_ids,
-                        allowed_audiences=allowed_audiences,
-                    )
-                    sq_bm25 = _bm25_for(sq)
-                    sub_ranked.append(merge_hybrid_hits(plan, sq_vec, sq_kw, sq_bm25))
-                candidates = rrf_fuse(sub_ranked)
-            else:
-                candidates = merge_hybrid_hits(plan, vector_candidates, keyword_hits, bm25_hits)
-            rerank_outcome = rerank_candidates(rewrite.rewritten_query, candidates)
-            reranked_hits = rerank_outcome.hits
+            raw_hits = retrieval.raw_hits
+            rewritten_hits = retrieval.rewritten_hits
+            keyword_hits = retrieval.keyword_hits
+            bm25_hits = retrieval.bm25_hits
+            fusion_sub_queries = retrieval.fusion_sub_queries
+            vector_candidates = retrieval.vector_candidates
+            candidates = retrieval.candidates
+            reranked_hits = retrieval.reranked_hits
+            rerank_outcome = retrieval.rerank_outcome
             # L16：把「索引版本 + 检索计划 + rerank 后命中」整体存入缓存；
             # 只存检索结果，最终回答永不入缓存。
             cache_put(
@@ -724,21 +863,53 @@ class CustomerServiceAgent:
                 with transaction(settings.DB_PATH) as conn:
                     repo.write_audit(
                         conn,
-                        actor=request.runtime_user_id,
+                        # 司机侧身份来自请求体，任何客户端都能自报，不能当审计主体。
+                        # actor 只记「未认证角色」，具体声明值放进 after 并标注来源，
+                        # 这样审计不会被伪造的 ID 污染成「司机 A 干的」。
+                        actor=f"unverified-{request.runtime_role}",
                         action="rbac.denied",
                         target_type="query",
                         target_id=request.session_id,
                         after={
                             "role": request.runtime_role,
+                            "declared_user_id": request.runtime_user_id,
+                            "identity_source": "request_body_unverified",
                             "leaked_chunk_ids": [h.chunk.chunk_id for h in leaked],
                             "leaked_audiences": [h.chunk.audience for h in leaked],
                         },
-                        comment="RBAC 最终断言拦截越权知识片段",
+                        comment=(
+                            "RBAC 最终断言拦截越权知识片段"
+                            "（操作人身份未经认证，declared_user_id 仅为声明值）"
+                        ),
                     )
                 rbac_denied_chunk_ids = [h.chunk.chunk_id for h in leaked]
                 reliable_hits = []
 
-        citations = build_citations(reliable_hits)
+        citations = citations_from_hits(reliable_hits)
+
+        # L37: 记录 RAG 检索 Trace——排障/面试时回答「命中了但依据不对，问题出在哪一环」
+        # 只记数量和判定结果，不记原文片段；事件内容仍会过 normalizer 的脱敏与截断。
+        trace_store.add(request.session_id, "rag_retrieval", {
+            "rewritten_query": rewrite.rewritten_query,
+            "cache_hit": cache_hit,
+            "raw_hits": len(raw_hits),
+            "reranked_hits": len(reranked_hits),
+            "low_confidence": low_confidence,
+            "citations": len(citations),
+            "rbac_denied": len(rbac_denied_chunk_ids),
+        })
+        # L41 对齐：混合检索结果 Trace（字段名与 L41 rag_hybrid_retrieved 一致）。
+        # index_cache_hit 在 driver 的 KnowledgeIndex 上没有对应属性，省略不编造。
+        trace_store.add(request.session_id, "rag_hybrid_retrieved", {
+            "session_id": request.session_id,
+            "mode": "hybrid_rag_with_index_cache",
+            "rewritten_query": rewrite.rewritten_query,
+            "index_version": index.version,
+            "index_chunk_count": index.chunk_count,
+            "retrieval_cache_hit": cache_hit,
+            "hit_count": len(citations),
+            "retrieval_stage": "hybrid_retrieval",
+        })
         
 
         # #4.三条answer_path 分支（L11 核心）
@@ -840,6 +1011,11 @@ class CustomerServiceAgent:
                     spec = DRIVER_TOOL_CATALOG.get_tool(planned_action.tool_name)
                     if spec:
                         hooks.pre_tool_call(planned_action, request, spec)
+                    # L41 对齐：工具调用生命周期开始 Trace。
+                    trace_store.add(request.session_id, "tool_started", {
+                        "session_id": request.session_id,
+                        "tool_name": planned_action.tool_name,
+                    })
                 
                 tool_observation = execute_tool_action(planned_action, request) if planned_action else None
                 # L37: 记录工具调用 Trace
@@ -848,9 +1024,21 @@ class CustomerServiceAgent:
                         "tool_name": planned_action.tool_name,
                         "status": tool_observation.status if tool_observation else "none",
                     })
+                    # L41 对齐：工具调用生命周期结束 Trace。
+                    trace_store.add(request.session_id, "tool_finished", {
+                        "session_id": request.session_id,
+                        "tool_name": planned_action.tool_name,
+                        "status": tool_observation.status if tool_observation else "none",
+                    })
                 # L36: 工具结果安全检查——防止 Prompt Injection 通过工具结果注入模型上下文
                 if tool_observation and tool_observation.status == "success":
                     is_safe, _reason = inspect_tool_result(tool_observation.data)
+                    # L41 对齐：只收集报告，本轮结束统一写一条 context_source_safety_checked
+                    safety_reports.append({
+                        "source": "tool_result",
+                        "tainted": not is_safe,
+                        "reason": _reason,
+                    })
                     if not is_safe:
                         tool_observation = None  # 不安全的结果直接丢弃
                 # L20：把原始 ToolObservation（含完整业务数据）压缩成安全 Observation，
@@ -893,9 +1081,23 @@ class CustomerServiceAgent:
                         summary="本轮没有匹配到可执行的司机域实时工具。",
                     )
 
+            # L41 对齐：LangChain 工具执行路径摘要（主链路未启用 create_agent，executed=False）。
+            trace_store.add(request.session_id, "langchain_tool_agent_completed", {
+                "session_id": request.session_id,
+                "executed": bool(langchain_state.get("create_agent")),
+                "tool_name": planned_action.tool_name if planned_action else None,
+            })
+
             if clarification:
                 # L32：写入 Session Memory，下一轮用户补参数后 consume_pending_clarification 会恢复原意图
                 _required_field = clarification.clarification_field or "coupon_id"
+                # L41 对齐：即将返回追问前的澄清 Trace。
+                trace_store.add(request.session_id, "tool_clarification_required", {
+                    "session_id": request.session_id,
+                    "intent": intent_result.intent,
+                    "missing_field": clarification.clarification_field,
+                    "candidate_count": len(clarification.candidates),
+                })
                 remember_pending_clarification(
                     session_id=request.session_id,
                     runtime_user_id=request.runtime_user_id,
@@ -914,60 +1116,127 @@ class CustomerServiceAgent:
                     {"role": "system", "content": "clarification_required"},
                     {"role": "user", "content": request.user_message},
                 ]
+                # L41 对齐：澄清分支不调模型。
+                trace_store.add(request.session_id, "model_answer_skipped", {
+                    "session_id": request.session_id,
+                    "reason": "clarification_required",
+                })
             elif business_fact_result.found:
                 # 事实拿到了：实时事实 + RAG 规则片段融合回答（L17 起保留的设计）。
-                fact_block = f"【司机实时业务事实（来自运力后端，可信）】\n{business_fact_result.summary}"
+                # L41 对齐：工具摘要属于外部数据，进 Prompt 前按来源检查并脱敏，不直接拼。
+                _fact_safe, _fact_reason = inspect_source(business_fact_result.summary)
+                safety_reports.append({
+                    "source": "tool_result",
+                    "tainted": not _fact_safe,
+                    "reason": _fact_reason,
+                })
+                _fact_summary = (
+                    business_fact_result.summary if _fact_safe else "***"
+                )
+                fact_block = f"【司机实时业务事实（来自运力后端，可信）】\n{_fact_summary}"
                 rag_context = "\n\n".join(
                     f"[{hit.chunk.chunk_id} | score={hit.score}]\n{hit.chunk.text}" for hit in reliable_hits
                 ) if reliable_hits else "当前问题没有匹配到卡券规则片段。"
-                system_msg = (
-                    "你是网约车司机端卡券客服 Agent。本轮拿到了司机的实时业务事实（已由运力后端校验，可信），"
-                    "同时也匹配到了一些卡券规则知识片段。回答时：\n"
-                    "1. 实时业务事实必须直接引用，不能编造或改数字；\n"
-                    "2. 卡券规则片段作为补充背景（如退款流程、资格要求等）；\n"
-                    "3. 如果事实和规则有冲突，以实时业务事实为准。"
+                # L41 对齐：RAG 片段同样按 rag_document 来源检查
+                _rag_safe, _rag_reason = inspect_source(rag_context)
+                safety_reports.append({
+                    "source": "rag_document",
+                    "tainted": not _rag_safe,
+                    "reason": _rag_reason,
+                })
+                if not _rag_safe:
+                    rag_context = "***"
+                context_block = "\n".join(context_report["model_context"])
+                user_msg = (
+                    f"用户原话：{request.user_message}\n\n"
+                    f"【上下文构建结果】\n{context_block}\n\n"
+                    f"{fact_block}\n\n【卡券规则知识片段（来自向量检索）】\n{rag_context}\n"
                 )
-                user_msg = f"用户原话：{request.user_message}\n\n{fact_block}\n\n【卡券规则知识片段（来自向量检索）】\n{rag_context}\n"
-                messages = [{"role": "system", "content": system_msg}, {"role": "user", "content": user_msg}]
-                model_result = call_chat_model(messages, http_client=self._chat_http_client,
-                                               api_key=self._chat_api_key, base_url=self._chat_base_url,
-                                               model=self._chat_model_name)
+                # system prompt 由 Prompt Registry 按 needs_business_tools / needs_rag 选择。
+                messages, _prompt_fragments = build_answer_messages(
+                    user_msg,
+                    needs_business_tools=True,
+                    needs_rag=bool(reliable_hits),
+                )
+                model_result = compose_answer(
+                    messages,
+                    http_client=self._chat_http_client,
+                    api_key=self._chat_api_key,
+                    base_url=self._chat_base_url,
+                    model=self._chat_model_name,
+                )
                 answer = model_result.answer
                 model_usage = model_result.usage
                 answer_path = "answer_with_tool_fact"
                 citations = []
+                # L41 对齐：本分支调用了模型生成答案。
+                trace_store.add(request.session_id, "model_answer_generated", {
+                    "session_id": request.session_id,
+                    "answer_path": answer_path,
+                    "answer_length": len(answer),
+                })
             else:
                 # 事实没拿到：a) RAG 有命中回退 RAG；b) 停 tool_fact_fallback
                 if reliable_hits and intent_result.intent != "general_chat":
                     rag_context = "\n\n".join(
                         f"[{hit.chunk.chunk_id} | score={hit.score}]\n{hit.chunk.text}" for hit in reliable_hits
                     )
-                    system_msg = (
-                        "你是网约车司机端卡券客服 Agent。当前尝试查询司机实时业务事实，但工具未返回数据"
-                        f"（原因：{business_fact_result.summary}）。\n"
-                        "不过你仍然匹配到了一些卡券规则知识片段。请基于规则片段回答用户问题，不要编造实时数据。"
+                    # L41 对齐：RAG 片段进 Prompt 前按来源检查（结构化输出到 Trace）
+                    _rag_safe, _rag_reason = inspect_source(rag_context)
+                    safety_reports.append({
+                        "source": "rag_document",
+                        "tainted": not _rag_safe,
+                        "reason": _rag_reason,
+                    })
+                    if not _rag_safe:
+                        rag_context = "***"
+                    user_msg = (
+                        f"用户原话：{request.user_message}\n\n"
+                        f"【工具查询结果】未返回数据（原因：{business_fact_result.summary}）\n\n"
+                        f"【卡券规则知识片段】\n{rag_context}"
                     )
-                    messages = [{"role": "system", "content": system_msg},
-                                {"role": "user", "content": f"用户原话：{request.user_message}\n\n【卡券规则知识片段】\n{rag_context}"}]
-                    model_result = call_chat_model(messages, http_client=self._chat_http_client,
-                                                   api_key=self._chat_api_key, base_url=self._chat_base_url,
-                                                   model=self._chat_model_name)
+                    messages, _prompt_fragments = build_answer_messages(
+                        user_msg, needs_rag=True, needs_business_tools=True
+                    )
+                    model_result = compose_answer(
+                        messages,
+                        http_client=self._chat_http_client,
+                        api_key=self._chat_api_key,
+                        base_url=self._chat_base_url,
+                        model=self._chat_model_name,
+                    )
                     answer = model_result.answer
                     answer_path = "answer_with_citations"
-                    citations = [Citation(citation_id=f"C{idx}", source_path=hit.chunk.source_path,
-                                          source_title=hit.chunk.title, chunk_id=hit.chunk.chunk_id,
-                                          score=hit.score, snippet=hit.chunk.text)
-                                 for idx, hit in enumerate(reliable_hits, start=1)]
+                    citations = citations_from_hits(reliable_hits)
                     model_usage = model_result.usage
+                    # L41 对齐：本分支调用了模型生成答案。
+                    trace_store.add(request.session_id, "model_answer_generated", {
+                        "session_id": request.session_id,
+                        "answer_path": answer_path,
+                        "answer_length": len(answer),
+                    })
                 else:
                     answer = business_fact_result.summary
                     answer_path = "tool_fact_fallback"
                     citations = []
                     model_usage = None
-                    messages = [{"role": "system", "content": "fallback"}, {"role": "user", "content": request.user_message}]
+                    messages, _prompt_fragments = build_answer_messages(
+                        request.user_message, needs_business_tools=True
+                    )
+                    # L41 对齐：工具事实兜底分支不调模型。
+                    trace_store.add(request.session_id, "model_answer_skipped", {
+                        "session_id": request.session_id,
+                        "reason": "tool_fact_fallback",
+                    })
         elif reliable_hits and intent_result.intent != "general_chat":
-            messages = render_vector_rag_messages(request, intent_result, reliable_hits, rewrite=rewrite)
-            model_result = call_chat_model(
+            messages = render_vector_rag_messages(
+                request,
+                intent_result,
+                reliable_hits,
+                rewrite=rewrite,
+                model_context=context_report["model_context"],
+            )
+            model_result = compose_answer(
                 messages,
                 http_client=self._chat_http_client,
                 api_key=self._chat_api_key,
@@ -977,21 +1246,58 @@ class CustomerServiceAgent:
             answer = model_result.answer
             answer_path = "answer_with_citations"
             model_usage = model_result.usage
+            # L41 对齐：本分支调用了模型生成答案。
+            trace_store.add(request.session_id, "model_answer_generated", {
+                "session_id": request.session_id,
+                "answer_path": answer_path,
+                "answer_length": len(answer),
+            })
         elif intent_result.intent == "general_chat":
-            messages = [
-                {"role": "system", "content": "你是网约车司机端卡券客服 Agent。普通寒暄可以直接接住，业务规则结论必须有知识依据。"},
-                {"role": "user", "content": f"用户原话：{request.user_message}\n粗意图：{intent_result.intent}\n当前分支：普通客服寒暄，不需要 citations。"},
-            ]
-            answer = build_general_chat_answer()
-            answer_path = "general_chat_without_citations"
+            # L41 对齐：寒暄话术固定在 rag/knowledge.py，不硬编码在 Agent 里。
+            knowledge_result = general_chat_result()
+            messages, _prompt_fragments = build_answer_messages(
+                f"用户原话：{request.user_message}\n粗意图：{intent_result.intent}"
+            )
+            answer = knowledge_result.answer
+            answer_path = knowledge_result.answer_path
             # L14：寒暄分支清空引用，和 answer_path 保持一致（否则会出现「无引用回答」却挂着 citations）。
-            citations = []
+            citations = knowledge_result.citations
             model_usage = None
+            # L41 对齐：寒暄分支用确定性话术，不调模型。
+            trace_store.add(request.session_id, "model_answer_skipped", {
+                "session_id": request.session_id,
+                "reason": "general_chat_deterministic_answer",
+            })
         else:
-            messages = render_vector_rag_messages(request, intent_result, reliable_hits, rewrite=rewrite)
-            answer = build_fallback_answer()
-            answer_path = "clarify_or_handoff"          # ← L11 叫 no_reliable_knowledge_fallback
+            # L41 对齐：无可靠依据的兜底话术固定在 rag/knowledge.py。
+            knowledge_result = low_confidence_result()
+            messages, _prompt_fragments = build_answer_messages(
+                f"用户原话：{request.user_message}\n粗意图：{intent_result.intent}"
+            )
+            answer = knowledge_result.answer
+            answer_path = knowledge_result.answer_path
+            citations = knowledge_result.citations
             model_usage = None
+            # L41 对齐：低置信分支不调模型。
+            trace_store.add(request.session_id, "model_answer_skipped", {
+                "session_id": request.session_id,
+                "reason": "low_confidence_fallback",
+            })
+            if low_confidence:
+                trace_store.add(request.session_id, "rag_low_confidence_fallback", {
+                    "session_id": request.session_id,
+                    "intent": intent_result.intent,
+                    "hit_count": len(reranked_hits),
+                    "status": "low_confidence",
+                })
+
+        # L41 对齐：回答 prompt 组装完成后记录上下文规模（不暴露 prompt 正文）。
+        trace_store.add(request.session_id, "prompt_context_built", {
+            "session_id": request.session_id,
+            "needs_business_tools": driver_domain_realtime,
+            "needs_rag": bool(reliable_hits),
+            "message_count": len(messages),
+        })
 
         # # 4. 拼装 Prompt（检索结果注入）
         # messages = render_vector_rag_messages(request, intent_result, hits)
@@ -1025,6 +1331,17 @@ class CustomerServiceAgent:
 
         # 6. 记录 token 成本（保留 L07 的 usage 传递）
         cost_summary = build_cost_summary(messages, answer, model_usage)
+        # L41 对齐：成本记录 Trace（字段取 CostSummary 真实属性 + 本轮模型调用次数）。
+        trace_store.add(request.session_id, "cost_recorded", {
+            "session_id": request.session_id,
+            "token_estimate": cost_summary.total_tokens,
+            "token_source": cost_summary.token_source,
+            "model_call_count": 1 if model_usage else 0,
+        })
+        # 预算告警：超阈值只记日志，不改回答——成本是观测问题，不是正确性问题。
+        warning_text = budget_warning(cost_summary)
+        if warning_text:
+            logger.warning(warning_text)
         event = {
             "message_count": message_count,
             "intent": intent_result.intent,
@@ -1078,6 +1395,9 @@ class CustomerServiceAgent:
         session_state = {
             "agent_version": "driver-coupon-L16-index-cache",
             "message_count": message_count,
+            # L34/L35 对齐 L41：上下文构建报告 + 历史压缩报告（脱敏后公开）。
+            "context": context_report,
+            "compression": compression_report,
             "runtime_context": {
                 "user_id": request.runtime_user_id,
                 "nickname": request.runtime_driver_name,
@@ -1248,6 +1568,11 @@ class CustomerServiceAgent:
                 "average_recall_at_k": quality_summary.average_recall_at_k,
                 "average_precision_at_k": quality_summary.average_precision_at_k,
             }
+        # L41 对齐：MCP 工具/资源/Prompt 绑定关系 Trace（与 session_state.mcp_binding 同口径）。
+        trace_store.add(request.session_id, "mcp_binding_resolved", {
+            "session_id": request.session_id,
+            **DRIVER_TOOL_CATALOG.binding_summary(planned_action, risk_level).model_dump(),
+        })
 
         # L34：把验证过的业务实体写回 Session Memory（下一轮 find_context_coupon 会优先用它）
         update_memory(
@@ -1266,8 +1591,44 @@ class CustomerServiceAgent:
                 risk_level=risk_level,
                 degradation=degradation,
             )
+        # L41 对齐：每个 Hook 卡口事件一条 Trace。
+        for _hook_event in hooks.events:
+            trace_store.add(request.session_id, "hook_executed", {
+                "session_id": request.session_id,
+                "hook_type": _hook_event.hook_type,
+                "target_name": _hook_event.target_name,
+                "status": _hook_event.result,
+            })
+
+        # L41 对齐：citations 也是外部数据，返回前统一按来源检查，污染片段替换成占位符
+        for _citation in citations:
+            _cit_safe, _cit_reason = inspect_source(_citation.snippet)
+            safety_reports.append({
+                "source": "rag_document",
+                "tainted": not _cit_safe,
+                "reason": _cit_reason,
+            })
+            if not _cit_safe:
+                _citation.snippet = "***"
+
+        # L41 对齐：外部来源安全汇总——一次请求只写一条，含检查数量与被污染来源
+        if safety_reports:
+            trace_store.add(request.session_id, "context_source_safety_checked", {
+                "tainted": any(report["tainted"] for report in safety_reports),
+                "tainted_sources": sorted({
+                    report["source"] for report in safety_reports if report["tainted"]
+                }),
+                "source_count": len(safety_reports),
+            })
 
         # 7. 返回模型回复
+        # L41 对齐：最终回答 Trace（answer_path / 风险等级 / 降级状态）。
+        trace_store.add(request.session_id, "final_answer_generated", {
+            "session_id": request.session_id,
+            "answer_path": answer_path,
+            "risk_level": risk_level,
+            "degradation": degradation.degraded,
+        })
         # L21：risk_level / degraded / needs_human_approval 是 ChatResponse 新增字段
         # L23：hook_events / hook_completion 是 Hooks 治理卡口记录
         return ChatResponse(

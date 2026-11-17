@@ -19,6 +19,52 @@ from store.db import transaction
 from store.seed import seed
 
 
+def test_cache_key_includes_visibility_scope():
+    """缓存 key 必须带可见性范围，否则角色之间会串缓存。
+
+    缓存里存的是「已过滤的命中」，命中后不再走 RBAC 过滤：
+    客服先问一次、司机再问同一句，就会拿到客服那份（含 internal）。
+    """
+
+    from api.schemas import KnowledgeIndex, RetrievalPlan
+
+    plan = RetrievalPlan.model_construct(
+        scene="refund",
+        original_query="未核销的卡券能退吗",
+        rewritten_query="未核销的卡券能退吗",
+        allowed_topics=["refund"],
+    )
+    index = KnowledgeIndex.model_construct(version="v-test")
+
+    driver = index_cache.cache_key_for(
+        plan, index, allowed_kb_ids={"kb-refund"}, allowed_audiences={"driver"}
+    )
+    agent = index_cache.cache_key_for(
+        plan,
+        index,
+        allowed_kb_ids={"kb-refund", "kb-internal"},
+        allowed_audiences={"driver", "internal"},
+    )
+    again = index_cache.cache_key_for(
+        plan, index, allowed_kb_ids={"kb-refund"}, allowed_audiences={"driver"}
+    )
+
+    assert driver != agent
+    assert driver == again
+
+    # 集合顺序不影响 key（必须排序后拼接）
+    assert index_cache.cache_key_for(
+        plan, index, allowed_kb_ids={"b", "a"}, allowed_audiences={"driver"}
+    ) == index_cache.cache_key_for(
+        plan, index, allowed_kb_ids={"a", "b"}, allowed_audiences={"driver"}
+    )
+
+    # None（不过滤）与空集合（一条都不许）必须区分
+    assert index_cache.cache_key_for(plan, index) != index_cache.cache_key_for(
+        plan, index, allowed_kb_ids=set(), allowed_audiences=set()
+    )
+
+
 @pytest.fixture()
 def db_with_seed(tmp_path, monkeypatch):
     db_path = tmp_path / "task11.db"

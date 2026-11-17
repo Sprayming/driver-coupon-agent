@@ -1,4 +1,4 @@
-"""Task 10 验证：草稿/未发布读取边界（TR-10.1 / TR-10.2）。
+﻿"""Task 10 验证：草稿/未发布读取边界（TR-10.1 / TR-10.2）。
 
 TR-10.1：historical chunk 在 release 索引中存在，检索进池，非历史意图下被软降权；
         历史意图下放行不降权——行为与 L16 方案Y 一致。
@@ -92,7 +92,8 @@ def test_tr10_1_historical_soft_demoted_for_non_history_query(db_with_seed):
     demotion_weight = REASON_WEIGHTS["历史卡券降权"]
     assert demotion_weight < 0, "历史片段降权权重应为负"
 
-    # 历史问题（如"2025 月卡折扣券还有吗"）：历史片段放行不降权。
+    # 历史问题（如"2025 月卡折扣券还有吗"）：历史片段正向加权，不能只是「不降权」。
     reasons_history = explain_rerank_reasons("2025 年月卡折扣券还有吗", hit, asks_for_history=True)
-    assert "用户明确问历史，历史片段放行不降权" in reasons_history
+    assert "用户明确问历史，历史片段加权" in reasons_history
     assert "历史卡券降权" not in reasons_history
+    assert REASON_WEIGHTS["用户明确问历史，历史片段加权"] > 0, "历史问题应给正向权重"

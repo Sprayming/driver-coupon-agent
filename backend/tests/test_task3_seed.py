@@ -1,4 +1,4 @@
-"""Task 3 验证：种子幂等与计数（TR-3.1）、md 新字段解析到 chunk（TR-3.2）。"""
+﻿"""Task 3 验证：种子幂等与计数（TR-3.1）、md 新字段解析到 chunk（TR-3.2）。"""
 
 from __future__ import annotations
 

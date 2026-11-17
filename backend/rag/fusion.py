@@ -20,7 +20,7 @@ RRF_K = 60
 FUSION_SYSTEM_PROMPT = (
     "你是一个查询改写助手。给定用户问题，生成 {count} 个多样化的子查询，"
     "覆盖不同角度（如规则细节、适用条件、例外情形）。"
-    "只返回 JSON 数组，不要其他文字。"
+    "只返回 JSON 字符串数组，形如 [\"子问题1\", \"子问题2\"]，不要对象、不要其他文字。"
 )
 
 
@@ -49,8 +49,24 @@ def generate_sub_queries(
             if text.endswith("```"):
                 text = text.rsplit("```", 1)[0]
         parsed = json.loads(text.strip())
-        if isinstance(parsed, list) and all(isinstance(x, str) for x in parsed):
-            return [q for q in parsed if q][:count]
+        if isinstance(parsed, list):
+            queries: list[str] = []
+            for item in parsed:
+                if isinstance(item, str) and item.strip():
+                    queries.append(item.strip())
+                    continue
+                # 兼容模型返回 [{"query": "..."}] 的对象数组（实测 Qwen3-8B 会这样回）。
+                if isinstance(item, dict):
+                    for key in ("query", "q", "question"):
+                        value = item.get(key)
+                        if isinstance(value, str) and value.strip():
+                            queries.append(value.strip())
+                            break
+            if queries:
+                return queries[:count]
+            logger.warning("RAG-Fusion 子查询解析为空列表，回退单查询: %r", text[:120])
+        else:
+            logger.warning("RAG-Fusion 子查询不是数组，回退单查询: %r", text[:120])
     except Exception as exc:  # noqa: BLE001 - 回退设计：任何异常都回退单查询。
         logger.warning("RAG-Fusion 子查询生成失败，回退单查询: %s", exc)
     return [query]

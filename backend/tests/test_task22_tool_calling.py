@@ -104,6 +104,18 @@ def test_tr22_1_refund_found_true(monkeypatch, _patch_embeddings, _mock_chat_llm
             True,  # user_matched
         ),
     )
+    # services/business_facts.py 用 from X import Y 建立本地绑定，
+    # 只 patch 源模块不会生效，必须同时 patch 使用方（同 TR-22.2 的写法）。
+    monkeypatch.setattr(
+        "services.business_facts.driver_refund_fact_from_service",
+        lambda driver_id, order_id=None: (
+            [
+                {"orderId": "88321", "status": "refunded", "amount": 15.0,
+                 "completedAt": "2026-10-19 09:30", "bankAccount": "尾号 8821"},
+            ],
+            True,
+        ),
+    )
     from agents.customer_service_agent import CustomerServiceAgent
     agent = CustomerServiceAgent()
 
@@ -134,6 +146,18 @@ def test_tr22_1_coupon_found_true(monkeypatch, _patch_embeddings, _mock_chat_llm
             True,
         ),
     )
+    monkeypatch.setattr(
+        "services.business_facts.driver_coupon_fact_from_service",
+        lambda driver_id: (
+            [
+                {"couponId": "CP-001", "name": "周末月卡", "status": "unused",
+                 "validFrom": "2026-10-15", "validTo": "2026-11-14"},
+                {"couponId": "CP-002", "name": "全月周卡", "status": "unused"},
+                {"couponId": "CP-003", "name": "体验卡", "status": "verified"},
+            ],
+            True,
+        ),
+    )
     from agents.customer_service_agent import CustomerServiceAgent
     agent = CustomerServiceAgent()
 
@@ -149,6 +173,19 @@ def test_tr22_1_income_found_true(monkeypatch, _patch_embeddings, _mock_chat_llm
     """司机域收入查询：found=True → answer_with_tool_fact。"""
     monkeypatch.setattr(
         "integrations.driver_service_client.driver_income_fact_from_service",
+        lambda driver_id, date_range="本月": (
+            {
+                "timeRange": "本月",
+                "totalIncome": 3280.0,
+                "couponIncome": 420.0,
+                "couponIncomePercent": 12.8,
+                "orders": 245,
+            },
+            True,
+        ),
+    )
+    monkeypatch.setattr(
+        "services.business_facts.driver_income_fact_from_service",
         lambda driver_id, date_range="本月": (
             {
                 "timeRange": "本月",

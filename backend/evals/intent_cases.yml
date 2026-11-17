@@ -1,0 +1,252 @@
+# 意图分类评测集：只评「一句话 → 主意图」，不跑完整 chat 链路。
+# 被 evals/intent_bakeoff.py 加载；标签必须与 api/schemas.py 的 Intent 枚举一致。
+# 版本约定：改动题目（增删改）必须升 version，旧版本保留，保证跨版本指标可比。
+# tags 只用于诊断，不参与评分：
+#   keyword    强关键词，规则应命中
+#   paraphrase 口语/同义，规则容易漏
+#   negation   否定句，规则容易反判
+#   multi      复合诉求（同时出现两个业务词）
+#   collision  关键词跨意图冲突
+#   boundary   信息不足或与业务无关
+
+version: v1
+description: 意图分类 v1，56 条中文司机口语样本（自建，非盲测）
+
+cases:
+  # —— refund_request（退款/退卡） ——
+  - case_id: refund-01
+    user_message: "我要退款"
+    expected_intent: refund_request
+    tags: [keyword]
+  - case_id: refund-02
+    user_message: "这张卡券能退吗？"
+    expected_intent: refund_request
+    tags: [keyword]
+  - case_id: refund-03
+    user_message: "我不想要了，钱退给我"
+    expected_intent: refund_request
+    tags: [paraphrase]
+  - case_id: refund-04
+    user_message: "这张券我不想要了，能退吗？"
+    expected_intent: refund_request
+    tags: [multi, collision]
+  - case_id: refund-05
+    user_message: "买错了，帮我取消一下"
+    expected_intent: refund_request
+    tags: [paraphrase]
+  - case_id: refund-06
+    user_message: "卡券退款多久到账？"
+    expected_intent: refund_request
+    tags: [keyword]
+  - case_id: refund-07
+    user_message: "临时有事去不了，能退卡吗？"
+    expected_intent: refund_request
+    tags: [keyword, paraphrase]
+  - case_id: refund-08
+    user_message: "这个卡券用不了，退了吧"
+    expected_intent: refund_request
+    tags: [paraphrase]
+  - case_id: refund-09
+    user_message: "我不想用了，能不能把钱退回来"
+    expected_intent: refund_request
+    tags: [paraphrase]
+  - case_id: refund-10
+    user_message: "退款要扣手续费吗？"
+    expected_intent: refund_request
+    tags: [keyword]
+  - case_id: refund-11
+    user_message: "卡券过期了能退吗？"
+    expected_intent: refund_request
+    tags: [paraphrase]
+  - case_id: refund-12
+    user_message: "我昨天申请退款了，现在到哪一步了？"
+    expected_intent: refund_request
+    tags: [keyword]
+
+  # —— order_query（卡券/订单/核销状态查询） ——
+  - case_id: order-01
+    user_message: "帮我查一下订单 ORD20260101001"
+    expected_intent: order_query
+    tags: [keyword, paraphrase]
+  - case_id: order-02
+    user_message: "我的卡券核销了吗？"
+    expected_intent: order_query
+    tags: [keyword]
+  - case_id: order-03
+    user_message: "这张卡券现在什么状态？"
+    expected_intent: order_query
+    tags: [keyword]
+  - case_id: order-04
+    user_message: "不用退款了，帮我查一下订单"
+    expected_intent: order_query
+    tags: [negation, collision]
+  - case_id: order-05
+    user_message: "昨天买的卡券怎么还没到账？"
+    expected_intent: order_query
+    tags: [keyword]
+  - case_id: order-06
+    user_message: "核销记录在哪里看？"
+    expected_intent: order_query
+    tags: [keyword]
+  - case_id: order-07
+    user_message: "帮我看看这张卡有没有核销"
+    expected_intent: order_query
+    tags: [keyword]
+  - case_id: order-08
+    user_message: "订单编号在哪查？"
+    expected_intent: order_query
+    tags: [paraphrase]
+
+  # —— promotion_consult（优惠/活动） ——
+  - case_id: promo-01
+    user_message: "优惠券怎么领？"
+    expected_intent: promotion_consult
+    tags: [keyword]
+  - case_id: promo-02
+    user_message: "这个月有什么活动？"
+    expected_intent: promotion_consult
+    tags: [keyword]
+  - case_id: promo-03
+    user_message: "打折券还有吗？"
+    expected_intent: promotion_consult
+    tags: [keyword]
+  - case_id: promo-04
+    user_message: "这个月的冲单奖励活动有什么要求？"
+    expected_intent: promotion_consult
+    tags: [keyword]
+  - case_id: promo-05
+    user_message: "优惠券和普通券能叠加使用吗？"
+    expected_intent: promotion_consult
+    tags: [keyword, collision]
+  - case_id: promo-06
+    user_message: "新司机有什么福利？"
+    expected_intent: promotion_consult
+    tags: [paraphrase]
+  - case_id: promo-07
+    user_message: "现在注册有优惠吗？"
+    expected_intent: promotion_consult
+    tags: [paraphrase]
+  - case_id: promo-08
+    user_message: "这个活动什么时候结束？"
+    expected_intent: promotion_consult
+    tags: [keyword]
+
+  # —— product_consult（卡种/商品咨询） ——
+  - case_id: product-01
+    user_message: "日卡和夜卡哪个划算？"
+    expected_intent: product_consult
+    tags: [keyword]
+  - case_id: product-02
+    user_message: "月卡多少钱？"
+    expected_intent: product_consult
+    tags: [keyword]
+  - case_id: product-03
+    user_message: "推荐一个适合我的卡券"
+    expected_intent: product_consult
+    tags: [keyword]
+  - case_id: product-04
+    user_message: "时段卡是什么意思？"
+    expected_intent: product_consult
+    tags: [keyword]
+  - case_id: product-05
+    user_message: "日卡能用多久？"
+    expected_intent: product_consult
+    tags: [keyword]
+  - case_id: product-06
+    user_message: "这三种卡有什么区别？"
+    expected_intent: product_consult
+    tags: [paraphrase]
+  - case_id: product-07
+    user_message: "哪个卡更省钱？"
+    expected_intent: product_consult
+    tags: [paraphrase]
+  - case_id: product-08
+    user_message: "我是夜班司机，买哪种卡合适？"
+    expected_intent: product_consult
+    tags: [paraphrase]
+
+  # —— complaint（投诉/强烈不满） ——
+  - case_id: complaint-01
+    user_message: "我要投诉"
+    expected_intent: complaint
+    tags: [keyword]
+  - case_id: complaint-02
+    user_message: "你们这是什么服务，太差了"
+    expected_intent: complaint
+    tags: [paraphrase]
+  - case_id: complaint-03
+    user_message: "客服一直踢皮球，没人管"
+    expected_intent: complaint
+    tags: [paraphrase]
+  - case_id: complaint-04
+    user_message: "再不处理我就去 315 曝光"
+    expected_intent: complaint
+    tags: [keyword]
+  - case_id: complaint-05
+    user_message: "我要举报你们"
+    expected_intent: complaint
+    tags: [keyword]
+  - case_id: complaint-06
+    user_message: "耽误我一天收入，必须赔偿"
+    expected_intent: complaint
+    tags: [keyword]
+  - case_id: complaint-07
+    user_message: "什么破系统，一直出错"
+    expected_intent: complaint
+    tags: [paraphrase]
+  - case_id: complaint-08
+    user_message: "你们这样处理我很不满意"
+    expected_intent: complaint
+    tags: [paraphrase]
+
+  # —— general_chat（寒暄/身份） ——
+  - case_id: chat-01
+    user_message: "你好"
+    expected_intent: general_chat
+    tags: [keyword]
+  - case_id: chat-02
+    user_message: "在吗？"
+    expected_intent: general_chat
+    tags: [keyword]
+  - case_id: chat-03
+    user_message: "谢谢"
+    expected_intent: general_chat
+    tags: [keyword]
+  - case_id: chat-04
+    user_message: "早上好"
+    expected_intent: general_chat
+    tags: [paraphrase]
+  - case_id: chat-05
+    user_message: "你是谁？"
+    expected_intent: general_chat
+    tags: [paraphrase]
+  - case_id: chat-06
+    user_message: "没事了，随便问一下"
+    expected_intent: general_chat
+    tags: [paraphrase]
+
+  # —— unknown（业务外/信息不足） ——
+  - case_id: unknown-01
+    user_message: "今天天气怎么样？"
+    expected_intent: unknown
+    tags: [boundary]
+  - case_id: unknown-02
+    user_message: "帮我写一首诗"
+    expected_intent: unknown
+    tags: [boundary]
+  - case_id: unknown-03
+    user_message: "附近有什么好吃的？"
+    expected_intent: unknown
+    tags: [boundary]
+  - case_id: unknown-04
+    user_message: "帮我算一下 23 乘 45"
+    expected_intent: unknown
+    tags: [boundary]
+  - case_id: unknown-05
+    user_message: "股票明天涨吗？"
+    expected_intent: unknown
+    tags: [boundary]
+  - case_id: unknown-06
+    user_message: "这个怎么办？"
+    expected_intent: unknown
+    tags: [boundary]

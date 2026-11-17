@@ -1,4 +1,4 @@
-"""RAG 平台演示数据种子（Task 3 / NFR-7）。
+﻿"""RAG 平台演示数据种子（Task 3 / NFR-7）。
 
 用法（backend 目录下）：
     python -m store.seed reset   # 删除 db 文件重建并播种
@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 from config import settings
-from rag.knowledge_base import parse_front_matter
+from rag.documents import parse_front_matter
 from store import repository as repo
 from store.db import init_db, transaction
 

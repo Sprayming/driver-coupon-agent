@@ -14,9 +14,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agents.customer_service_agent import CustomerServiceAgent
 from api.admin_routes import create_admin_router
+from api.auth_routes import create_auth_router
 from api.routes import create_router
+from config import settings
 from rag import index_cache
-from store import releases
+from store import releases, users
+from store.db import init_db
 
 
 agent = CustomerServiceAgent()
@@ -45,6 +48,11 @@ def create_app() -> FastAPI:
     """组装司机卡券退款 Agent 应用。"""
 
     app = FastAPI(title="Driver Coupon Refund Agent v0.1")
+    # 方案 A：启动时幂等建表并播种内部员工账号（users 表为空时才写）。
+    init_db(settings.DB_PATH)
+    seeded = users.ensure_seed_users(settings.DB_PATH)
+    if seeded:
+        print(f"[auth] 已播种 {seeded} 个演示账号（密码见 AGENT_AUTH_SEED_PASSWORD）", flush=True)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -53,7 +61,9 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(create_router(lambda: agent))
-    # RAG 平台化（Task 4）：管理接口 /admin/*，X-Admin-Token 鉴权。
+    # 内部员工登录（方案 A）：/auth/login、/auth/logout、/auth/me。
+    app.include_router(create_auth_router())
+    # RAG 平台化（Task 4）：管理接口 /admin/*，会话角色或 X-Admin-Token 鉴权。
     app.include_router(create_admin_router())
     # Task 8：发布/回滚后清空全局索引与检索缓存（Task 9 升级为按 release 隔离失效）。
     releases.add_release_change_listener(index_cache.on_release_change)

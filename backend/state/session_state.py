@@ -6,7 +6,7 @@
 - pending_clarification：上一轮让用户补的参数（卡券号/活动ID/订单号）
 - verified_coupon_id / verified_activity_id / verified_order_id：验证过的业务实体
 - last_intent / last_user_message：上一轮的意图和消息
-- history_messages：最近几轮对话（压缩后）
+- history_messages：历史消息不落服务端，由请求体回传后在 context/builder 里压缩脱敏
 
 本课次演化：
 - L32 session-memory：模块级全局 dict，支持 pending_clarification 读写
@@ -19,7 +19,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from api.schemas import FeedbackRecord
 
 # 会话记忆：{session_id: {runtime_user_id: memory_dict}}
 SESSION_MEMORIES: dict[str, dict[str, dict[str, Any]]] = {}
@@ -29,6 +32,12 @@ MESSAGE_COUNT_BY_SESSION: dict[str, int] = {}
 
 # 成本事件：{session_id: [event]}
 COST_EVENTS_BY_SESSION: dict[str, list[dict]] = {}
+
+# L41 对齐：反馈记录（/feedback/submit 追加，内存态，进程重启即清空）。
+FEEDBACK_RECORDS: list["FeedbackRecord"] = []
+
+# L41 对齐：反馈回填的临时回归用例；evals/runner.EvalRunner 通过 backfilled_cases 读取同一份列表。
+BACKFILLED_CASES: list[dict[str, Any]] = []
 
 
 def current_memory(session_id: str, runtime_user_id: str) -> dict[str, Any]:

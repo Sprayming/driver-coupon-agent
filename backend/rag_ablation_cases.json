@@ -1,0 +1,167 @@
+[
+  {
+    "case_id": "abe-refund-01",
+    "question": "这卡买完还没使，能退不",
+    "expected_chunk_ids": ["coupon-refund-eligibility"]
+  },
+  {
+    "case_id": "abe-refund-02",
+    "question": "什么情况下可以申请退款",
+    "expected_chunk_ids": ["coupon-refund-eligibility"]
+  },
+  {
+    "case_id": "abe-refund-03",
+    "question": "卡券没使用能退钱吗",
+    "expected_chunk_ids": ["coupon-refund-eligibility"]
+  },
+  {
+    "case_id": "abe-refund-04",
+    "question": "P-REF-001 规则是什么",
+    "expected_chunk_ids": ["coupon-refund-eligibility"]
+  },
+  {
+    "case_id": "abe-excl-01",
+    "question": "卡券已经核销了还能退款吗",
+    "expected_chunk_ids": ["coupon-refund-exclusions"]
+  },
+  {
+    "case_id": "abe-excl-02",
+    "question": "什么情况不能退款",
+    "expected_chunk_ids": ["coupon-refund-exclusions"]
+  },
+  {
+    "case_id": "abe-excl-03",
+    "question": "券用过了还能退吗",
+    "expected_chunk_ids": ["coupon-refund-exclusions"]
+  },
+  {
+    "case_id": "abe-flow-01",
+    "question": "退款要走什么流程、多久能到账",
+    "expected_chunk_ids": ["coupon-refund-process", "coupon-refund-timeline"]
+  },
+  {
+    "case_id": "abe-flow-02",
+    "question": "退款申请怎么提交",
+    "expected_chunk_ids": ["coupon-refund-process"]
+  },
+  {
+    "case_id": "abe-flow-03",
+    "question": "退款几天能到账",
+    "expected_chunk_ids": ["coupon-refund-timeline"]
+  },
+  {
+    "case_id": "abe-flow-04",
+    "question": "钱什么时候退回来",
+    "expected_chunk_ids": ["coupon-refund-timeline"]
+  },
+  {
+    "case_id": "abe-buy-01",
+    "question": "买日卡有什么限制",
+    "expected_chunk_ids": ["coupon-purchase-eligibility"]
+  },
+  {
+    "case_id": "abe-buy-02",
+    "question": "月卡多少钱",
+    "expected_chunk_ids": ["coupon-purchase-eligibility"]
+  },
+  {
+    "case_id": "abe-pay-01",
+    "question": "付了钱但卡没到账",
+    "expected_chunk_ids": ["coupon-payment-issue"]
+  },
+  {
+    "case_id": "abe-pay-02",
+    "question": "支付成功券没到",
+    "expected_chunk_ids": ["coupon-payment-issue"]
+  },
+  {
+    "case_id": "abe-cmp-01",
+    "question": "我要投诉你们",
+    "expected_chunk_ids": ["coupon-complaint-handling"]
+  },
+  {
+    "case_id": "abe-cmp-02",
+    "question": "怎么投诉司机端客服",
+    "expected_chunk_ids": ["coupon-complaint-handling"]
+  },
+  {
+    "case_id": "abe-cmp-03",
+    "question": "我要投诉，怎么升级处理",
+    "expected_chunk_ids": ["coupon-complaint-escalation"]
+  },
+  {
+    "case_id": "abe-time-01",
+    "question": "卡券几点到几点能用",
+    "expected_chunk_ids": ["coupon-time-window"]
+  },
+  {
+    "case_id": "abe-time-02",
+    "question": "夜卡使用时间",
+    "expected_chunk_ids": ["coupon-time-window"]
+  },
+  {
+    "case_id": "abe-month-01",
+    "question": "月卡有效期多久",
+    "expected_chunk_ids": ["coupon-monthly-rule"]
+  },
+  {
+    "case_id": "abe-month-02",
+    "question": "卡过期了怎么办",
+    "expected_chunk_ids": ["coupon-monthly-rule"]
+  },
+  {
+    "case_id": "abe-act-01",
+    "question": "卡券怎么激活",
+    "expected_chunk_ids": ["coupon-activation-rule"]
+  },
+  {
+    "case_id": "abe-act-02",
+    "question": "核销是什么意思",
+    "expected_chunk_ids": ["coupon-activation-rule"]
+  },
+  {
+    "case_id": "abe-old-01",
+    "question": "2025 年的老卡券当时怎么规定的",
+    "expected_chunk_ids": ["coupon-old-promotion"]
+  },
+  {
+    "case_id": "abe-mix-01",
+    "question": "周末日卡怎么用",
+    "expected_chunk_ids": ["coupon-time-window", "coupon-activation-rule"]
+  },
+  {
+    "case_id": "abe-adv-01",
+    "question": "钱想拿回来",
+    "expected_chunk_ids": ["coupon-refund-eligibility", "coupon-refund-process"]
+  },
+  {
+    "case_id": "abe-adv-02",
+    "question": "这玩意儿用不了了想换钱",
+    "expected_chunk_ids": ["coupon-refund-eligibility"]
+  },
+  {
+    "case_id": "abe-adv-03",
+    "question": "卡失效了咋整",
+    "expected_chunk_ids": ["coupon-activation-rule", "coupon-monthly-rule"]
+  },
+  {
+    "case_id": "abe-adv-04",
+    "question": "P-REF-001",
+    "expected_chunk_ids": ["coupon-refund-eligibility"]
+  },
+  {
+    "case_id": "abe-adv-05",
+    "question": "P-REF-002",
+    "expected_chunk_ids": ["coupon-refund-exclusions"]
+  },
+  {
+    "case_id": "abe-adv-06",
+    "question": "我不想用了，怎么弄",
+    "expected_chunk_ids": ["coupon-refund-eligibility", "coupon-refund-process"]
+  },
+  {
+    "case_id": "abe-adv-07",
+    "question": "一整天的那个卡什么时候才能刷",
+    "expected_chunk_ids": ["coupon-time-window"]
+  }
+]

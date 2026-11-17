@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 
 import pytest
 
@@ -127,6 +128,12 @@ def test_tr20_1_audit_records_rbac_denial(db_with_seed, monkeypatch):
     # 这里断言 driver 的命中不含 internal（已由参数化测试覆盖），审计事件存在性放宽。
     # 若触发了最终断言，应有 denied 事件；若检索层已过滤，则 denied 可能为空（也安全）。
     assert isinstance(denied, list)
+    # 触发时校验身份口径：请求体自报的 ID 不能当审计主体。
+    for event in denied:
+        assert event["actor"] == "unverified-driver"
+        payload = json.loads(event["after_state"])
+        assert payload["identity_source"] == "request_body_unverified"
+        assert payload["declared_user_id"] == "driver-001"
 
 
 def test_tr20_1_driver_cannot_access_internal_via_bm25(db_with_seed, monkeypatch):

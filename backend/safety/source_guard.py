@@ -84,3 +84,20 @@ def inspect_tool_result(result: dict | str | None) -> tuple[bool, str]:
     else:
         text = str(result)
     return inspect_source(text)
+
+
+def inspect_sources(
+    items: list[tuple[str, str]],
+) -> tuple[list[str], list[dict[str, object]]]:
+    """批量检查上下文来源（L41 同款入口），返回脱敏文本 + 公开安全摘要。
+
+    命中的攻击原文不进入报告，只保留来源、是否污染和命中原因。
+    """
+
+    sanitized: list[str] = []
+    reports: list[dict[str, object]] = []
+    for source, content in items:
+        is_safe, reason = inspect_source(content)
+        reports.append({"source": source, "tainted": not is_safe, "reason": reason})
+        sanitized.append(content if is_safe else "***")
+    return sanitized, reports

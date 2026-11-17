@@ -1,0 +1,416 @@
+{
+  "generated_at": "2026-11-15T11:03:56",
+  "dataset": {
+    "version": "v1",
+    "sha256": "53b0679aba7a",
+    "cases_count": 56
+  },
+  "dataset_version": "v1",
+  "dataset_sha256": "53b0679aba7a",
+  "cases_count": 56,
+  "llm_model": "Qwen/Qwen3-8B",
+  "providers": {
+    "rules": {
+      "status": "ok",
+      "total": 56,
+      "correct": 37,
+      "accuracy": 0.6607,
+      "macro_f1": 0.6796,
+      "latency": {
+        "avg_ms": 0.0,
+        "p95_ms": 0.0
+      },
+      "per_class": {
+        "general_chat": {
+          "precision": 1.0,
+          "recall": 0.5,
+          "f1": 0.6667,
+          "support": 6
+        },
+        "promotion_consult": {
+          "precision": 0.8571,
+          "recall": 0.75,
+          "f1": 0.8,
+          "support": 8
+        },
+        "product_consult": {
+          "precision": 1.0,
+          "recall": 0.5,
+          "f1": 0.6667,
+          "support": 8
+        },
+        "order_query": {
+          "precision": 0.5556,
+          "recall": 0.625,
+          "f1": 0.5882,
+          "support": 8
+        },
+        "refund_request": {
+          "precision": 0.8333,
+          "recall": 0.4167,
+          "f1": 0.5556,
+          "support": 12
+        },
+        "complaint": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 8
+        },
+        "unknown": {
+          "precision": 0.3158,
+          "recall": 1.0,
+          "f1": 0.48,
+          "support": 6
+        }
+      },
+      "failures": [
+        {
+          "case_id": "refund-02",
+          "message": "这张卡券能退吗？",
+          "expected": "refund_request",
+          "actual": "order_query",
+          "tags": "keyword",
+          "error": ""
+        },
+        {
+          "case_id": "refund-03",
+          "message": "我不想要了，钱退给我",
+          "expected": "refund_request",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "refund-04",
+          "message": "这张券我不想要了，能退吗？",
+          "expected": "refund_request",
+          "actual": "promotion_consult",
+          "tags": "multi,collision",
+          "error": ""
+        },
+        {
+          "case_id": "refund-05",
+          "message": "买错了，帮我取消一下",
+          "expected": "refund_request",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "refund-08",
+          "message": "这个卡券用不了，退了吧",
+          "expected": "refund_request",
+          "actual": "order_query",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "refund-09",
+          "message": "我不想用了，能不能把钱退回来",
+          "expected": "refund_request",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "refund-11",
+          "message": "卡券过期了能退吗？",
+          "expected": "refund_request",
+          "actual": "order_query",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "order-01",
+          "message": "帮我查一下订单 ORD20260101001",
+          "expected": "order_query",
+          "actual": "unknown",
+          "tags": "keyword,paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "order-04",
+          "message": "不用退款了，帮我查一下订单",
+          "expected": "order_query",
+          "actual": "refund_request",
+          "tags": "negation,collision",
+          "error": ""
+        },
+        {
+          "case_id": "order-08",
+          "message": "订单编号在哪查？",
+          "expected": "order_query",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "promo-06",
+          "message": "新司机有什么福利？",
+          "expected": "promotion_consult",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "promo-07",
+          "message": "现在注册有优惠吗？",
+          "expected": "promotion_consult",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "product-03",
+          "message": "推荐一个适合我的卡券",
+          "expected": "product_consult",
+          "actual": "order_query",
+          "tags": "keyword",
+          "error": ""
+        },
+        {
+          "case_id": "product-06",
+          "message": "这三种卡有什么区别？",
+          "expected": "product_consult",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "product-07",
+          "message": "哪个卡更省钱？",
+          "expected": "product_consult",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "product-08",
+          "message": "我是夜班司机，买哪种卡合适？",
+          "expected": "product_consult",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "chat-04",
+          "message": "早上好",
+          "expected": "general_chat",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "chat-05",
+          "message": "你是谁？",
+          "expected": "general_chat",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "chat-06",
+          "message": "没事了，随便问一下",
+          "expected": "general_chat",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        }
+      ]
+    },
+    "hybrid": {
+      "status": "ok",
+      "total": 56,
+      "correct": 39,
+      "accuracy": 0.6964,
+      "macro_f1": 0.7083,
+      "latency": {
+        "avg_ms": 79.3,
+        "p95_ms": 112.3
+      },
+      "per_class": {
+        "general_chat": {
+          "precision": 1.0,
+          "recall": 0.5,
+          "f1": 0.6667,
+          "support": 6
+        },
+        "promotion_consult": {
+          "precision": 0.8571,
+          "recall": 0.75,
+          "f1": 0.8,
+          "support": 8
+        },
+        "product_consult": {
+          "precision": 1.0,
+          "recall": 0.5,
+          "f1": 0.6667,
+          "support": 8
+        },
+        "order_query": {
+          "precision": 0.625,
+          "recall": 0.625,
+          "f1": 0.625,
+          "support": 8
+        },
+        "refund_request": {
+          "precision": 0.875,
+          "recall": 0.5833,
+          "f1": 0.7,
+          "support": 12
+        },
+        "complaint": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 8
+        },
+        "unknown": {
+          "precision": 0.3333,
+          "recall": 1.0,
+          "f1": 0.5,
+          "support": 6
+        }
+      },
+      "failures": [
+        {
+          "case_id": "refund-04",
+          "message": "这张券我不想要了，能退吗？",
+          "expected": "refund_request",
+          "actual": "promotion_consult",
+          "tags": "multi,collision",
+          "error": ""
+        },
+        {
+          "case_id": "refund-05",
+          "message": "买错了，帮我取消一下",
+          "expected": "refund_request",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "refund-08",
+          "message": "这个卡券用不了，退了吧",
+          "expected": "refund_request",
+          "actual": "order_query",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "refund-09",
+          "message": "我不想用了，能不能把钱退回来",
+          "expected": "refund_request",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "refund-11",
+          "message": "卡券过期了能退吗？",
+          "expected": "refund_request",
+          "actual": "order_query",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "order-01",
+          "message": "帮我查一下订单 ORD20260101001",
+          "expected": "order_query",
+          "actual": "unknown",
+          "tags": "keyword,paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "order-04",
+          "message": "不用退款了，帮我查一下订单",
+          "expected": "order_query",
+          "actual": "refund_request",
+          "tags": "negation,collision",
+          "error": ""
+        },
+        {
+          "case_id": "order-08",
+          "message": "订单编号在哪查？",
+          "expected": "order_query",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "promo-06",
+          "message": "新司机有什么福利？",
+          "expected": "promotion_consult",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "promo-07",
+          "message": "现在注册有优惠吗？",
+          "expected": "promotion_consult",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "product-03",
+          "message": "推荐一个适合我的卡券",
+          "expected": "product_consult",
+          "actual": "order_query",
+          "tags": "keyword",
+          "error": ""
+        },
+        {
+          "case_id": "product-06",
+          "message": "这三种卡有什么区别？",
+          "expected": "product_consult",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "product-07",
+          "message": "哪个卡更省钱？",
+          "expected": "product_consult",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "product-08",
+          "message": "我是夜班司机，买哪种卡合适？",
+          "expected": "product_consult",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "chat-04",
+          "message": "早上好",
+          "expected": "general_chat",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "chat-05",
+          "message": "你是谁？",
+          "expected": "general_chat",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        },
+        {
+          "case_id": "chat-06",
+          "message": "没事了，随便问一下",
+          "expected": "general_chat",
+          "actual": "unknown",
+          "tags": "paraphrase",
+          "error": ""
+        }
+      ]
+    }
+  }
+}

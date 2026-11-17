@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from api.schemas import Observation, ToolObservation
+from tools.runtime_context import mask_payload
 
 
 def _extract_business_fact(data: dict[str, Any]) -> tuple[str, Any]:
@@ -30,6 +31,11 @@ def _extract_business_fact(data: dict[str, Any]) -> tuple[str, Any]:
 
 def build_observation(tool_observation: ToolObservation) -> Observation:
     """把内部 ToolObservation 压缩成可进入回答上下文的 Observation。"""
+
+    # 统一脱敏：手机号/身份证/银行卡在进入模型前打码（Runtime Context 层收口）。
+    tool_observation = tool_observation.model_copy(
+        update={"data": mask_payload(tool_observation.data)}
+    )
     data = tool_observation.data
     tool_name = tool_observation.tool_name
 

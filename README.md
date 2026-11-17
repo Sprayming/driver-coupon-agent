@@ -23,7 +23,11 @@
 cd backend
 pip install -r requirements.txt
 cp ../course.env.example ../course.env  # 填入你的 OpenAI 兼容接口 Key
-uvicorn api.main:app --reload --port 8000
+uvicorn main:app --reload --port 8000
+
+# Mock 司机域微服务(另开终端,端口 8082)
+cd backend
+uvicorn driver_service_mock:app --port 8082
 
 # 前端
 cd frontend
@@ -35,6 +39,36 @@ cd backend && pytest
 ```
 
 > 配置说明：模型走 OpenAI 兼容接口（硅基流动 / DeepSeek 等均可），将 `course.env.example` 复制为 `course.env` 并填入自己的 Key。
+
+### 管理后台登录（内部员工）
+
+管理台按角色开放权限，服务端强制校验：`viewer` 只读审计 / `editor` 改草稿并提交 / `reviewer` 审核 / `publisher` 发布、灰度、回滚。
+
+首次启动会自动播种四个演示账号（密码为 `AGENT_AUTH_SEED_PASSWORD`，默认 `demo123456`）：
+
+| 账号 | 角色 | 能做什么 |
+|---|---|---|
+| `admin` | publisher | 全部操作（含发布与回滚） |
+| `reviewer` | reviewer | 审核通过/驳回 |
+| `editor` | editor | 同步草稿、提交审核 |
+| `viewer` | viewer | 只读审计日志 |
+
+会话使用 HttpOnly Cookie（8 小时），前端不接触任何令牌；机器调用仍可用 `X-Admin-Token`。
+
+登录页支持自助注册：注册账号固定为 `viewer`（只读），注册后自动登录；需要编辑/审核/发布权限，由 `publisher` 在「用户管理」里改角色。用户管理（增删账号、改角色、重置密码、停用）仅 `publisher` 可见，所有变更写入审计。生产环境可设 `AGENT_ALLOW_SELF_REGISTER=false` 关闭注册入口。
+
+
+## Docker 一键部署
+
+```bash
+cp course.env.example course.env   # 先填入自己的 Key(只读挂载进容器,不打包进镜像)
+docker compose up -d --build
+```
+
+- 前端对话台：http://localhost （默认 80 端口，`FRONTEND_PORT=8080 docker compose up -d` 可改）
+- 后端 API + Trace 调试台：http://localhost:8000
+- 三个容器：`frontend`（nginx 托管 React 产物，`/api` 反代后端）→ `backend`（FastAPI，首启自动播种 SQLite 平台库）→ `driver-mock`（Mock 司机域微服务，仅容器内网可见）
+- 接真实司机域后端时，只需把 `docker-compose.yml` 里 `DRIVER_SERVICE_BASE_URL` 改为真实地址
 
 ## 目录结构
 

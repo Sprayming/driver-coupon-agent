@@ -27,11 +27,13 @@ from typing import Any
 
 from api.schemas import (
     RoutePlan,
+    RoutePlanCandidate,
     RouteSource,
     ToolCandidate,
     PlannerTrace,
     RiskLevel,
 )
+from models.router_client import plan_route_candidate
 from tools.catalog import DRIVER_TOOL_CATALOG
 
 
@@ -68,6 +70,11 @@ class ToolCatalog:
         """白名单收窄：只保留候选列表里存在的工具名，避免模型开放未知工具。"""
         allowed_names = {c.name for c in candidates}
         return [name for name in proposed if name in allowed_names]
+
+    def intent_tools(self, intent: str) -> list[str]:
+        """公开「意图 → 工具」映射：该意图没有工具语义时返回空列表。"""
+
+        return self._intent_tools(intent)
 
     @staticmethod
     def _intent_tools(intent: str) -> list[str]:
@@ -106,27 +113,84 @@ class TaskPlanner:
     def __init__(self, tool_catalog: ToolCatalog | None = None) -> None:
         self.tool_catalog = tool_catalog or ToolCatalog()
 
-    async def plan(
+    def plan(
         self,
         user_message: str,
         runtime_context: dict[str, Any] | None = None,
     ) -> tuple[RoutePlan, PlannerTrace]:
-        """生成本轮 RoutePlan，并把规则和工具候选约束收口到统一结果。"""
+        """生成本轮 RoutePlan：规则基线 +（低置信时）模型候选，最终由代码裁决。"""
+
         rule_plan = self._apply_safety_constraints(
             user_message,
             self.plan_by_rules(user_message, runtime_context or {}),
         )
         candidates = self.tool_catalog.candidate_summaries(rule_plan)
 
-        # 高置信直接返回规则结果，省模型调用（diver 当前模型成本高）。
+        # 高置信直接返回规则结果，省模型调用（driver 当前模型成本高）。
         if rule_plan.confidence >= 0.85:
             constrained = self._constrain_required_tools(rule_plan, candidates)
             return constrained, self._build_trace(rule_plan, constrained, candidates)
 
-        # 低置信时预留分类模型接口；当前 diver 环境默认走规则兜底。
-        fallback_plan = rule_plan.model_copy(update={"source": "rules_fallback"})
-        constrained = self._constrain_required_tools(fallback_plan, candidates)
+        # 低置信才问模型：模型只提议，代码裁决。
+        # 没有 Key / 超时 / JSON 不合法 → plan_route_candidate 返回 None，退回规则兜底。
+        candidate = plan_route_candidate(user_message, rule_plan)
+        merged = self._merge_candidate(rule_plan, candidate, candidates)
+        # 安全覆盖必须放在候选合并之后：模型不能把写动作降成轻路径。
+        merged = self._apply_safety_constraints(user_message, merged)
+        constrained = self._constrain_required_tools(merged, candidates)
         return constrained, self._build_trace(rule_plan, constrained, candidates)
+
+    def _merge_candidate(
+        self,
+        rule_plan: RoutePlan,
+        candidate: RoutePlanCandidate | None,
+        candidates: list[ToolCandidate],
+    ) -> RoutePlan:
+        """把模型候选收敛进规则基线。
+
+        三条硬约束（对标 L41）：
+        1. intent 必须和规则基线一致，否则整体作废；
+        2. 工具只能在工具目录给出的候选里补，知识域已在 router_client 层过滤；
+        3. **风险等级、是否进 workflow、是否走 RAG 一律由基线决定**——模型只能补工具和
+           知识域。让模型抬风险会把普通咨询推进审批流程，让模型降风险会绕过安全闸门，
+           两个方向都不能开。
+        """
+
+        if candidate is None:
+            return rule_plan.model_copy(update={"source": "rules_fallback"})
+        if candidate.intent != rule_plan.intent:
+            return rule_plan.model_copy(update={"source": "rules_fallback"})
+        if candidate.confidence < self.MIN_MODEL_CONFIDENCE:
+            return rule_plan.model_copy(update={"source": "rules_fallback"})
+
+        allowed_tools = {
+            item.name
+            for item in candidates
+            if item.allowed_in_light_path
+            and item.name in set(self.tool_catalog.intent_tools(rule_plan.intent))
+        }
+        merged_tools = list(
+            dict.fromkeys(
+                [
+                    *rule_plan.required_tools,
+                    *(name for name in candidate.required_tools if name in allowed_tools),
+                ]
+            )
+        )
+        merged_domains = list(
+            dict.fromkeys([*rule_plan.knowledge_domains, *candidate.knowledge_domains])
+        )
+
+        return rule_plan.model_copy(
+            update={
+                # 补了工具就必须声明需要工具，否则 RoutePlan 自相矛盾。
+                "needs_business_tools": rule_plan.needs_business_tools or bool(merged_tools),
+                "required_tools": merged_tools,
+                "knowledge_domains": merged_domains,
+                "confidence": max(rule_plan.confidence, candidate.confidence),
+                "source": "classifier",
+            }
+        )
 
     def _build_trace(
         self,

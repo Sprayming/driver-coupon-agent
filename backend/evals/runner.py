@@ -17,9 +17,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 import yaml
+
+# 默认用例文件；config/settings.py 没有单独的 CASES_PATH，以 evals/cases.yml 为准。
+DEFAULT_CASES_PATH = os.path.join(os.path.dirname(__file__), "cases.yml")
 
 
 @dataclass
@@ -56,13 +59,32 @@ class EvalSummary:
         return self.passed / self.total if self.total > 0 else 0.0
 
 
+def _response_next_action(response: Any) -> str | None:
+    """从 ChatResponse 的真实字段还原本轮 next_action。
+
+    driver 的 ChatResponse 没有顶层 next_action 字段，需要从 clarification /
+    route_plan / needs_human_approval 这些既有字段还原，保证评测不因取不到字段而误判。
+    """
+    direct = getattr(response, "next_action", None)
+    if direct:
+        return direct
+    if getattr(response, "clarification", None) is not None:
+        return "ask_clarification"
+    route_plan = getattr(response, "route_plan", None)
+    if route_plan is not None and getattr(route_plan, "requires_workflow", False):
+        return "route_to_controlled_workflow"
+    if getattr(response, "needs_human_approval", False):
+        return "transfer_to_human"
+    return "answer_user"
+
+
 def load_eval_cases(cases_path: str | None = None) -> list[EvalCase]:
     """从 cases.yml 加载评测用例。
 
     被谁调用：run_evals()
     """
     if cases_path is None:
-        cases_path = os.path.join(os.path.dirname(__file__), "cases.yml")
+        cases_path = DEFAULT_CASES_PATH
     if not os.path.exists(cases_path):
         return []
     with open(cases_path, "r", encoding="utf-8") as f:
@@ -108,7 +130,7 @@ def run_evals(agent, cases: list[EvalCase] | None = None) -> EvalSummary:
         try:
             response = agent.chat(request)
             actual_intent = response.intent
-            actual_next_action = response.next_action
+            actual_next_action = _response_next_action(response)
 
             failures = []
             if actual_intent != case.expected_intent:
@@ -141,3 +163,43 @@ def run_evals(agent, cases: list[EvalCase] | None = None) -> EvalSummary:
             summary.failed += 1
 
     return summary
+
+
+class EvalRunner:
+    """评测执行器：绑定 agent_provider 与用例文件，路由层只实例化一次。
+
+    backfilled_cases 由 /feedback/submit 回填（引用 state.session_state.BACKFILLED_CASES），
+    这里只负责把回填 dict 转成 EvalCase，不承载判定逻辑。
+    """
+
+    def __init__(self, agent_provider: Callable[[], Any], cases_path: str | None = None) -> None:
+        self._agent_provider = agent_provider
+        self.cases_path = cases_path or DEFAULT_CASES_PATH
+        self.backfilled_cases: list[dict[str, Any]] = []
+
+    def load_cases(self) -> list[EvalCase]:
+        """静态用例 + 反馈回填用例（同 case_id 时静态用例优先）。"""
+        cases = load_eval_cases(self.cases_path)
+        known_ids = {case.case_id for case in cases}
+        for item in self.backfilled_cases:
+            case_id = str(item.get("case_id") or "")
+            if not case_id or case_id in known_ids:
+                continue
+            known_ids.add(case_id)
+            cases.append(
+                EvalCase(
+                    case_id=case_id,
+                    user_message=str(item.get("user_message") or ""),
+                    expected_intent=str(item.get("expected_intent") or ""),
+                    expected_next_action=item.get("expected_next_action"),
+                    runtime_context=item.get("runtime_context") or {},
+                )
+            )
+        return cases
+
+    def run(self, case_id: str | None = None) -> EvalSummary:
+        """跑单条或全部用例；case_id 不存在时返回空汇总，不抛异常。"""
+        cases = self.load_cases()
+        if case_id:
+            cases = [case for case in cases if case.case_id == case_id]
+        return run_evals(self._agent_provider(), cases)

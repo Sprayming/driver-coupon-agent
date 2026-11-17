@@ -102,3 +102,40 @@ CREATE INDEX IF NOT EXISTS idx_review_events_version ON review_events(version_id
 CREATE INDEX IF NOT EXISTS idx_release_items_version ON release_items(version_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_target ON audit_log(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
+
+-- 内部员工账号（方案 A）：后台登录身份，角色决定可执行的操作。
+-- role: viewer（只读）/ editor（改草稿、提交审核）/ reviewer（审核）/ publisher（发布、灰度、回滚）
+CREATE TABLE IF NOT EXISTS users (
+    user_id      TEXT PRIMARY KEY,
+    username     TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL DEFAULT '',
+    role         TEXT NOT NULL CHECK (role IN ('viewer','editor','reviewer','publisher')),
+    password_hash TEXT NOT NULL,                  -- pbkdf2_sha256$迭代次数$盐$摘要，绝不存明文
+    status       TEXT NOT NULL DEFAULT 'active',  -- active / disabled
+    created_at   TEXT NOT NULL
+);
+
+-- 后台会话：只存 token 的 sha256，DB 泄露也拿不到可用会话。
+CREATE TABLE IF NOT EXISTS admin_sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(user_id),
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_user ON admin_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);
+
+-- HITL 审批结果去重：主键兜住并发，替代原先进程内 dict（重启即失效）。
+-- status: processing（已抢占）/ done（已处理完）
+CREATE TABLE IF NOT EXISTS approval_results (
+    thread_id   TEXT NOT NULL,
+    approval_id TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    approved    INTEGER,
+    approver    TEXT NOT NULL DEFAULT '',
+    comment     TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (thread_id, approval_id)
+);

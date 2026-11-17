@@ -1,0 +1,327 @@
+{
+  "generated_at": "2026-11-15T11:10:05",
+  "dataset": {
+    "version": "v1",
+    "sha256": "53b0679aba7a",
+    "cases_count": 56
+  },
+  "dataset_version": "v1",
+  "dataset_sha256": "53b0679aba7a",
+  "cases_count": 56,
+  "llm_model": "Qwen/Qwen3-8B",
+  "providers": {
+    "llm": {
+      "status": "partial: 存在失败用例",
+      "total": 56,
+      "correct": 24,
+      "accuracy": 0.4286,
+      "macro_f1": 0.5689,
+      "latency": {
+        "avg_ms": 5812.4,
+        "p95_ms": 6911.8
+      },
+      "per_class": {
+        "general_chat": {
+          "precision": 1.0,
+          "recall": 0.3333,
+          "f1": 0.5,
+          "support": 6
+        },
+        "promotion_consult": {
+          "precision": 1.0,
+          "recall": 0.375,
+          "f1": 0.5455,
+          "support": 8
+        },
+        "product_consult": {
+          "precision": 1.0,
+          "recall": 0.375,
+          "f1": 0.5455,
+          "support": 8
+        },
+        "order_query": {
+          "precision": 1.0,
+          "recall": 0.375,
+          "f1": 0.5455,
+          "support": 8
+        },
+        "refund_request": {
+          "precision": 1.0,
+          "recall": 0.6667,
+          "f1": 0.8,
+          "support": 12
+        },
+        "complaint": {
+          "precision": 1.0,
+          "recall": 0.375,
+          "f1": 0.5455,
+          "support": 8
+        },
+        "unknown": {
+          "precision": 1.0,
+          "recall": 0.3333,
+          "f1": 0.5,
+          "support": 6
+        }
+      },
+      "failures": [
+        {
+          "case_id": "refund-07",
+          "message": "临时有事去不了，能退卡吗？",
+          "expected": "refund_request",
+          "actual": "error",
+          "tags": "keyword,paraphrase",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "refund-08",
+          "message": "这个卡券用不了，退了吧",
+          "expected": "refund_request",
+          "actual": "error",
+          "tags": "paraphrase",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "refund-10",
+          "message": "退款要扣手续费吗？",
+          "expected": "refund_request",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "refund-12",
+          "message": "我昨天申请退款了，现在到哪一步了？",
+          "expected": "refund_request",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "order-02",
+          "message": "我的卡券核销了吗？",
+          "expected": "order_query",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "order-03",
+          "message": "这张卡券现在什么状态？",
+          "expected": "order_query",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "order-04",
+          "message": "不用退款了，帮我查一下订单",
+          "expected": "order_query",
+          "actual": "error",
+          "tags": "negation,collision",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "order-06",
+          "message": "核销记录在哪里看？",
+          "expected": "order_query",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "order-08",
+          "message": "订单编号在哪查？",
+          "expected": "order_query",
+          "actual": "error",
+          "tags": "paraphrase",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "promo-01",
+          "message": "优惠券怎么领？",
+          "expected": "promotion_consult",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "promo-03",
+          "message": "打折券还有吗？",
+          "expected": "promotion_consult",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "promo-04",
+          "message": "这个月的冲单奖励活动有什么要求？",
+          "expected": "promotion_consult",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "promo-06",
+          "message": "新司机有什么福利？",
+          "expected": "promotion_consult",
+          "actual": "error",
+          "tags": "paraphrase",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "promo-08",
+          "message": "这个活动什么时候结束？",
+          "expected": "promotion_consult",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "product-01",
+          "message": "日卡和夜卡哪个划算？",
+          "expected": "product_consult",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "product-03",
+          "message": "推荐一个适合我的卡券",
+          "expected": "product_consult",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "product-04",
+          "message": "时段卡是什么意思？",
+          "expected": "product_consult",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "product-06",
+          "message": "这三种卡有什么区别？",
+          "expected": "product_consult",
+          "actual": "error",
+          "tags": "paraphrase",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "product-08",
+          "message": "我是夜班司机，买哪种卡合适？",
+          "expected": "product_consult",
+          "actual": "error",
+          "tags": "paraphrase",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "complaint-01",
+          "message": "我要投诉",
+          "expected": "complaint",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "complaint-03",
+          "message": "客服一直踢皮球，没人管",
+          "expected": "complaint",
+          "actual": "error",
+          "tags": "paraphrase",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "complaint-04",
+          "message": "再不处理我就去 315 曝光",
+          "expected": "complaint",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "complaint-06",
+          "message": "耽误我一天收入，必须赔偿",
+          "expected": "complaint",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "complaint-08",
+          "message": "你们这样处理我很不满意",
+          "expected": "complaint",
+          "actual": "error",
+          "tags": "paraphrase",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "chat-02",
+          "message": "在吗？",
+          "expected": "general_chat",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "chat-03",
+          "message": "谢谢",
+          "expected": "general_chat",
+          "actual": "error",
+          "tags": "keyword",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "chat-04",
+          "message": "早上好",
+          "expected": "general_chat",
+          "actual": "error",
+          "tags": "paraphrase",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "chat-06",
+          "message": "没事了，随便问一下",
+          "expected": "general_chat",
+          "actual": "error",
+          "tags": "paraphrase",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "unknown-02",
+          "message": "帮我写一首诗",
+          "expected": "unknown",
+          "actual": "error",
+          "tags": "boundary",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "unknown-03",
+          "message": "附近有什么好吃的？",
+          "expected": "unknown",
+          "actual": "error",
+          "tags": "boundary",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "unknown-05",
+          "message": "股票明天涨吗？",
+          "expected": "unknown",
+          "actual": "error",
+          "tags": "boundary",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        },
+        {
+          "case_id": "unknown-06",
+          "message": "这个怎么办？",
+          "expected": "unknown",
+          "actual": "error",
+          "tags": "boundary",
+          "error": "HTTPStatusError: Client error '429 Too Many Requests' for url 'https://api.siliconflow.cn/v1/chat/completions'\nFor more information check"
+        }
+      ]
+    }
+  }
+}

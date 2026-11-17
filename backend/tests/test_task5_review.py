@@ -126,7 +126,9 @@ def test_tr5_2_happy_path_events_and_audit(client_db):
         assert actions == ["submit", "reject", "submit", "approve"]
         # actor/comment/时间戳均可查。
         reject_row = next(row for row in events if row["action"] == "reject")
-        assert reject_row["actor"] == "admin-a"
+        # 审计操作人取自鉴权身份：X-Admin-Token 对应服务身份 machine，
+        # 请求体里的 actor 不再生效（防止伪造，见 test_task22_accounts）。
+        assert reject_row["actor"] == "machine"
         assert reject_row["comment"] == "缺依据，补退款条款"
         assert reject_row["created_at"]
         approve_row = next(row for row in events if row["action"] == "approve")

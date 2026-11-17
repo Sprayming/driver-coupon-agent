@@ -6,48 +6,12 @@ from pathlib import Path
 from typing import Any
 
 from api.schemas import KnowledgeChunk, KnowledgeSection, SourceDocument
-from config.settings import CHUNK_OVERLAP, CHUNK_SIZE, KNOWLEDGE_DIR
-
-
-def parse_metadata_value(value: str) -> Any:
-    """解析 Markdown 元数据里的简单值。"""
-
-    parsed_value = value.strip()
-    if parsed_value.startswith("[") and parsed_value.endswith("]"):
-        return [
-            item.strip().strip("\"'")
-            for item in parsed_value[1:-1].split(",")
-            if item.strip()
-        ]
-    if "," in parsed_value:
-        return [
-            item.strip().strip("\"'")
-            for item in parsed_value.split(",")
-            if item.strip()
-        ]
-    return parsed_value
-
-
-def parse_front_matter(markdown: str) -> tuple[dict[str, Any], str]:
-    """拆出 Markdown 顶部 front matter 和正文。"""
-
-    if not markdown.startswith("---"):
-        return {}, markdown
-
-    end_marker = markdown.find("\n---", 3)
-    if end_marker == -1:
-        return {}, markdown
-
-    raw_metadata = markdown[3:end_marker].strip()
-    body = markdown[end_marker + 4 :].lstrip()
-    metadata: dict[str, Any] = {}
-    for raw_line in raw_metadata.splitlines():
-        line = raw_line.strip()
-        if not line or ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        metadata[key.strip()] = parse_metadata_value(value)
-    return metadata, body
+from config.settings import CHUNK_OVERLAP, CHUNK_SIZE
+from rag.documents import (  # noqa: F401 - 兼容既有导入路径，文档层已迁到 rag.documents
+    load_source_documents,
+    parse_front_matter,
+    parse_metadata_value,
+)
 
 
 def parse_section_metadata(line: str) -> dict[str, Any]:
@@ -65,17 +29,6 @@ def parse_section_metadata(line: str) -> dict[str, Any]:
         key, value = part.split(":", 1)
         metadata[key.strip()] = parse_metadata_value(value)
     return metadata
-
-
-def load_source_documents() -> list[SourceDocument]:
-    """读取 knowledge 目录里的所有 Markdown 原文。"""
-
-    documents: list[SourceDocument] = []
-    for path in sorted(KNOWLEDGE_DIR.glob("*.md")):
-        metadata, body = parse_front_matter(path.read_text(encoding="utf-8"))
-        title = str(metadata.get("title") or path.stem)
-        documents.append(SourceDocument(source_path=path.name, title=title, metadata=metadata, body=body))
-    return documents
 
 
 def parse_sections(document: SourceDocument) -> list[KnowledgeSection]:

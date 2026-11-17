@@ -4,9 +4,11 @@ import { CitationCard } from "./CitationCard";
 interface MessageListProps {
   messages: Message[];
   isLoading: boolean;
+  /** 司机端隐藏调试信息（answer_path、token/成本），保留答案与引用。 */
+  showDebug?: boolean;
 }
 
-export function MessageList({ messages, isLoading }: MessageListProps) {
+export function MessageList({ messages, isLoading, showDebug = true }: MessageListProps) {
   if (messages.length === 0) {
     return (
       <div className="panel message-panel empty">
@@ -29,7 +31,7 @@ export function MessageList({ messages, isLoading }: MessageListProps) {
           <div key={index} className={`message ${msg.role}`}>
             <div className="message-header">
               <span className="role">{msg.role === "user" ? "司机" : "Agent"}</span>
-              {msg.answer_path && (
+              {showDebug && msg.answer_path && (
                 <span className={`path-badge ${msg.answer_path}`}>
                   {msg.answer_path}
                 </span>
@@ -44,7 +46,7 @@ export function MessageList({ messages, isLoading }: MessageListProps) {
                 ))}
               </div>
             )}
-            {msg.cost_summary && (
+            {showDebug && msg.cost_summary && (
               <div className="cost-info">
                 <small>
                   耗时: {msg.latency_ms != null ? `${(msg.latency_ms / 1000).toFixed(2)} s` : "-"} |

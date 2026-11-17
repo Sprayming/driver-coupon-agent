@@ -1,103 +1,142 @@
-"""L06：Prompt 加载器 + 注册表。
+"""Prompt Registry：按执行阶段和业务信号选择、排序并渲染稳定规则片段。
 
-和小哲电商 prompts/loader.py 对齐：
-- PromptManager：从 prompt_registry.yml 加载 prompt 模板
-- 支持按场景路由（faq / refund / general_chat 等）
-- 支持版本号（方便灰度和回滚）
+对标小哲 L41 `prompts/loader.py`：
 
-本课次演化：
-- L05 prompt-loader：PromptManager 基础加载
-- L06 prompt-versioning：版本号 + 场景路由
-- L41 final-rehearsal：终态 Prompt 管理
+- registry 只登记「规则片段」（security / role / contract / policy / capability）
+- 片段正文放在同名 `.md`，加载时做目录穿越校验
+- 调用方用 signals 选择片段，模型只拿到渲染后的 system prompt，不接触注册表
 
-被谁调用：agents/customer_service_agent.py chat() 阶段 4/5（生成回答时选 prompt）
+动态业务事实（工具 Observation、RAG 引用、Runtime Context）仍由各自模块提供，
+不允许写进 prompt md，避免把易变事实固化成规则。
 """
 
 from __future__ import annotations
 
-import os
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import yaml
 
 
-# 默认 prompt 注册表路径
-_DEFAULT_REGISTRY_PATH = os.path.join(os.path.dirname(__file__), "prompt_registry.yml")
+PROMPTS_DIR = Path(__file__).resolve().parent
+REGISTRY_PATH = PROMPTS_DIR / "prompt_registry.yml"
+
+
+@dataclass(frozen=True)
+class PromptFragment:
+    """一个可按执行阶段和业务信号选择的稳定 Prompt 片段。"""
+
+    name: str
+    level: str
+    version: str
+    load: str
+    priority: int
+    status: str = "active"
+    description: str = ""
 
 
 class PromptManager:
-    """Prompt 模板管理器。
+    """管理稳定规则片段；不承载业务事实，也不替调用方做路由决策。"""
 
-    从 prompt_registry.yml 加载所有 prompt 模板，按场景名 + 版本号查找。
-    """
+    def __init__(self, prompts_dir: Path = PROMPTS_DIR) -> None:
+        self.prompts_dir = Path(prompts_dir).resolve()
+        self._registry = self._load_registry()
 
-    def __init__(self, registry_path: str | None = None) -> None:
-        self.registry_path = registry_path or _DEFAULT_REGISTRY_PATH
-        self._registry: dict[str, Any] = {}
-        self._load()
+    @lru_cache(maxsize=None)
+    def load(self, name: str) -> str:
+        """只允许读取注册目录中的 Markdown，避免自由文件名跳出 Prompt 边界。"""
 
-    def _load(self) -> None:
-        """加载 prompt_registry.yml。"""
-        if not os.path.exists(self.registry_path):
-            # 文件不存在时用内置默认值（不阻断主流程）
-            self._registry = self._default_registry()
-            return
-        try:
-            with open(self.registry_path, "r", encoding="utf-8") as f:
-                self._registry = yaml.safe_load(f) or {}
-        except Exception:
-            self._registry = self._default_registry()
+        path = (self.prompts_dir / f"{name}.md").resolve()
+        if path.parent != self.prompts_dir:
+            raise ValueError(f"Invalid prompt name: {name}")
+        return path.read_text(encoding="utf-8").strip()
 
-    def _default_registry(self) -> dict[str, Any]:
-        """内置默认 prompt（注册表文件不存在时的兜底）。"""
-        return {
-            "scenarios": {
-                "general_chat": {
-                    "system": "你是网约车司机端卡券客服 Agent，请用友好、准确的语气回答司机的问题。",
-                    "version": "1.0",
-                },
-                "faq": {
-                    "system": "你是网约车司机端卡券客服 Agent。请基于提供的政策知识回答，不要编造信息。",
-                    "version": "1.0",
-                },
-                "refund": {
-                    "system": "你是网约车司机端卡券客服 Agent。退款是高风险操作，你只能解释政策和判断资格，不能直接执行退款。",
-                    "version": "1.0",
-                },
+    def select_fragments(self, signals: dict[str, Any]) -> list[PromptFragment]:
+        """按受控信号选择片段；priority 只控制拼接顺序，不代表模型置信度。"""
+
+        selected = [
+            fragment
+            for fragment in self._registry
+            if fragment.status == "active" and self._matches(fragment.load, signals)
+        ]
+        return sorted(selected, key=lambda fragment: (-fragment.priority, fragment.name))
+
+    def render_system_prompt(self, fragments: list[PromptFragment]) -> str:
+        """把已选择片段渲染成一条 system message，不混入动态业务事实。"""
+
+        return "\n\n".join(
+            f"[{fragment.name} | {fragment.level} | {fragment.version} | priority={fragment.priority}]\n"
+            f"{self.load(fragment.name)}"
+            for fragment in fragments
+        )
+
+    def selection_summary(
+        self, fragments: list[PromptFragment], *, phase: str
+    ) -> list[dict[str, Any]]:
+        """返回可公开的片段元数据，不暴露完整 system prompt。"""
+
+        return [
+            {
+                "name": fragment.name,
+                "level": fragment.level,
+                "version": fragment.version,
+                "load": fragment.load,
+                "priority": fragment.priority,
+                "phase": phase,
+                "estimated_tokens": max(1, len(self.load(fragment.name)) // 4),
             }
-        }
+            for fragment in fragments
+        ]
 
-    def get_prompt(self, scenario: str, version: str | None = None) -> str | None:
-        """按场景名获取 system prompt。
+    def _load_registry(self) -> list[PromptFragment]:
+        payload = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8")) or {}
+        return [
+            PromptFragment(
+                name=str(item["name"]),
+                level=str(item.get("level", "capability")),
+                version=str(item.get("version", "v1")),
+                load=str(item.get("load", "always")),
+                priority=int(item.get("priority", 50)),
+                status=str(item.get("status", "active")),
+                description=str(item.get("description", "")),
+            )
+            for item in payload.get("prompts", [])
+        ]
 
-        Args:
-            scenario: 场景名（general_chat / faq / refund 等）
-            version: 版本号（None 表示用最新版）
+    @staticmethod
+    def _matches(load: str, signals: dict[str, Any]) -> bool:
+        """把注册表里的 load 条件翻译成对 signals 的判断。"""
 
-        Returns:
-            system prompt 字符串，找不到返回 None
-        """
-        scenarios = self._registry.get("scenarios", {})
-        scenario_cfg = scenarios.get(scenario)
-        if not scenario_cfg:
-            return None
-        if version and scenario_cfg.get("version") != version:
-            # 版本不匹配时返回 None（调用方可以降级）
-            return None
-        return scenario_cfg.get("system")
+        if load == "always":
+            return True
+        if load == "when_route":
+            return signals.get("phase") == "route"
+        if load == "when_clarification":
+            return signals.get("phase") == "clarification"
+        if load == "when_final_answer":
+            return signals.get("phase") == "final_answer"
+        if load == "when_high_risk_after_sale":
+            return bool(signals.get("high_risk_after_sale"))
+        if load == "when_business_tool":
+            return bool(signals.get("needs_business_tools"))
+        if load == "when_rag":
+            return bool(signals.get("needs_rag"))
+        return False
 
-    def list_scenarios(self) -> list[str]:
-        """列出所有可用场景。"""
-        return list(self._registry.get("scenarios", {}).keys())
+
+# 模块级单例：与 L41 同名，供 answer_client / router_client / langchain_runtime 共用。
+prompt_manager = PromptManager()
 
 
-# 模块级单例
-_prompt_manager: PromptManager | None = None
+def load_prompt(name: str) -> str:
+    """兼容课程里按文件名直接读取的场景；新链路统一使用 PromptManager。"""
+
+    return prompt_manager.load(name.removesuffix(".md"))
 
 
 def get_prompt_manager() -> PromptManager:
-    """获取 PromptManager 单例。"""
-    global _prompt_manager
-    if _prompt_manager is None:
-        _prompt_manager = PromptManager()
-    return _prompt_manager
+    """获取 PromptManager 单例（保留既有调用方式）。"""
+
+    return prompt_manager

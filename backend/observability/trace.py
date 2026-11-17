@@ -20,6 +20,9 @@ from datetime import datetime
 from typing import Any
 
 
+TRACE_SCHEMA_VERSION = "trace_v1"
+
+
 @dataclass
 class TraceEvent:
     """单个 Trace 事件。"""
@@ -121,3 +124,28 @@ def get_trace_store() -> TraceStore:
     if _trace_store is None:
         _trace_store = TraceStore()
     return _trace_store
+
+
+def record_trace_events(
+    session_id: str, events: tuple[tuple[str, dict[str, Any]], ...]
+) -> None:
+    """把模块返回的公开 trace 事件统一写入 TraceStore（L41 同款入口）。"""
+
+    trace_store = get_trace_store()
+    for event_type, payload in events:
+        trace_store.add(session_id, event_type, payload)
+
+
+def public_trace_summary(
+    session_id: str, *, include_hidden_cot_flag: bool = True
+) -> dict[str, Any]:
+    """生成响应里的公开 trace 摘要，不暴露隐藏推理或敏感原文。"""
+
+    summary: dict[str, Any] = {
+        "schema_version": TRACE_SCHEMA_VERSION,
+        "event_count": len(get_trace_store().get(session_id)),
+        "public_trace_only": True,
+    }
+    if include_hidden_cot_flag:
+        summary["hidden_cot_exposed"] = False
+    return summary

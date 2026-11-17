@@ -1,4 +1,4 @@
-"""L16 知识索引和 RAG 检索缓存。
+﻿"""L16 知识索引和 RAG 检索缓存。
 
 索引缓存的是知识结构（版本指纹 + 倒排表），检索缓存只缓存稳定知识的检索结果；
 最终回答和实时业务问题（订单/物流/退款进度/库存）不能缓存。
@@ -104,14 +104,33 @@ def get_release_index(
     return RELEASE_INDEX_CACHE[release_id]
 
 
-def cache_key_for(plan: RetrievalPlan, index: KnowledgeIndex) -> str:
+def cache_key_for(
+    plan: RetrievalPlan,
+    index: KnowledgeIndex,
+    *,
+    allowed_kb_ids: set[str] | None = None,
+    allowed_audiences: set[str] | None = None,
+) -> str:
     """为检索计划和索引版本生成缓存 key。
 
-    key 三要素：索引版本（知识没变）+ 场景（路由没变）+ 归一化改写后问题（问题等价）。
-    索引版本在 key 里，是「缓存不答旧规则」的根本保证。
+    key 四要素：索引版本（知识没变）+ 场景（路由没变）+ 归一化改写后问题（问题等价）
+    + 可见性范围（角色没变）。
+
+    可见性必须进 key：缓存里存的是「过滤后的命中」，命中后不会再走 RBAC 过滤。
+    不带这个维度，客服先问一次，司机再问同一句就会命中客服那份缓存（含 internal），
+    被最终断言整批清空后只能得到兜底话术；反过来司机先问，客服会拿到缺内部依据的答案。
+
+    None 表示「不过滤」（老路径/测试），用 `*` 占位；空集合表示「一条都不许」，
+    两者必须区分，否则又会把「没配置」和「配置成空」混为一谈。
     """
 
-    payload = f"{index.version}|{plan.scene}|{normalize_query(plan.rewritten_query)}"
+    def _scope(values: set[str] | None) -> str:
+        if values is None:
+            return "*"
+        return ",".join(sorted(values))
+
+    scope = f"{_scope(allowed_kb_ids)}|{_scope(allowed_audiences)}"
+    payload = f"{index.version}|{plan.scene}|{normalize_query(plan.rewritten_query)}|{scope}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 

@@ -7,8 +7,6 @@ from pathlib import Path
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-# Prompt Registry 作为业务规则文件存放在 backend 根目录。
-PROMPT_REGISTRY_PATH = BACKEND_DIR / "prompt_registry.json"
 # 本项目 backend 只有一层嵌套（项目根/backend），parents[0] 即项目根。
 # L07 是 课程根/lesson目录/backend 两层嵌套才用 parents[1]，结构不同不能照抄。
 DEFAULT_COURSE_ENV_PATH = BACKEND_DIR.parents[0] / "course.env"
@@ -26,7 +24,7 @@ TOP_K = 2
 # 上面的 TOP_K 保留给 L10~L13 旧链路回退用（不删，便于对比实验），新链路不再直接引用它。
 # CANDIDATE_K：宽召回时每个查询各取几条进候选池（配合 merge 去重）；
 # FINAL_TOP_K：reranker 精排之后，真正喂给回答 Prompt 的片段条数。
-CANDIDATE_K = 4
+CANDIDATE_K = 8
 FINAL_TOP_K = 2
 # —— L15 hybrid 召回 ——
 # 向量宽召回条数沿用上面的 CANDIDATE_K（即课程版的 VECTOR_TOP_K，L14 已就位，不重复定义）。
@@ -156,6 +154,29 @@ RAG_FUSION_ENABLED = env_flag_enabled("AGENT_RAG_FUSION_ENABLED", default=False)
 GATE_ENABLED = env_flag_enabled("AGENT_GATE_ENABLED", default=False)
 # 管理 API 共享密钥（FR-10）。课程本地默认值仅用于调试，生产由环境变量注入。
 ADMIN_TOKEN = os.getenv("AGENT_ADMIN_TOKEN", "dev-admin-token")
+
+# —— 方案 A：内部员工账号体系（最小可用）——
+# 会话 Cookie 名（HttpOnly，SameSite=Lax；前端不落 localStorage）。
+AUTH_COOKIE_NAME = "agent_admin_session"
+# 会话有效期（小时）。
+AUTH_SESSION_TTL_HOURS = int(os.getenv("AGENT_AUTH_SESSION_TTL_HOURS", "8"))
+# 首次启动自动播种的演示账号密码（仅本地演示；生产必须显式注入强密码或关闭播种）。
+AUTH_SEED_PASSWORD = os.getenv("AGENT_AUTH_SEED_PASSWORD", "demo123456")
+# 是否允许登录页自助注册：默认允许，且只能注册为 viewer（只读），
+# 需要编辑/审核/发布权限必须由 publisher 在「用户管理」里提权。生产可设为 false。
+AUTH_ALLOW_SELF_REGISTER = os.getenv("AGENT_ALLOW_SELF_REGISTER", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+# —— 意图识别供应商 ——
+# rule：纯规则（默认，零延迟、可解释，演示稳定）；
+# hybrid：规则优先，命中低置信/关键词冲突/否定时调一次语义分类兜底，失败自动回退规则。
+INTENT_PROVIDER = os.getenv("AGENT_INTENT_PROVIDER", "hybrid").strip().lower()
+# 语义兜底单次超时（秒）。必须短：意图层在关键路径上，超时就回退规则，不拖垮聊天。
+# 2.0s 是按实测 P95≈1.6s 留出的余量；再长会明显拖慢含歧义的请求。
+INTENT_LLM_TIMEOUT_SECONDS = float(os.getenv("AGENT_INTENT_LLM_TIMEOUT_SECONDS", "2.0"))
 # SQLite 数据库文件路径（Task 1 store 层默认值与之对齐）。
 DB_PATH = Path(os.getenv("AGENT_DB_PATH", str(BACKEND_DIR / "data" / "rag_platform.db")))
 # RAG-Fusion 参数：子查询条数（默认 3，spec 假设项，评测后再调）与 RRF 平滑常数 k=60。

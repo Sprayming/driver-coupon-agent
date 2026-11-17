@@ -9,7 +9,16 @@ chroma_db/
 .screenshots/
 logs/
 *.log
-周明-简历-草稿.md
 node_modules/
 dist/
 .DS_Store
+
+# 个人材料：课程讲义、算法题、面试复盘、简历（不入库）
+第*讲-*.md
+第*讲-*.pdf
+FDE算法题清单-30题.*
+面试问答复盘-*.md
+面试问答复盘-*.pdf
+面试追问速答卡.md
+周明-简历*
+rag-platform-tech-notes.md

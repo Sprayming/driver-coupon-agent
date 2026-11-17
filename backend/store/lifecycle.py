@@ -1,4 +1,4 @@
-"""知识生命周期服务层（Task 4 起）：md 同步、版本查询、差异对比。
+﻿"""知识生命周期服务层（Task 4 起）：md 同步、版本查询、差异对比。
 
 审核流（Task 5）、发布（Task 6）、灰度（Task 7）、回滚（Task 8）
 继续在本模块追加；所有写操作统一走 repository.write_audit 留痕。
@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import json
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +18,7 @@ from api.schemas import DocVersionView, SyncResult
 # 不能在顶部 from config.settings import DB_PATH 绑定常量——
 # 测试 patch(settings.DB_PATH) 改不到已绑定的名字，会让写操作误打到真实库（Task 5 踩过的坑）。
 from config import settings
-from rag.knowledge_base import parse_front_matter
+from rag.documents import parse_front_matter
 from store import repository as repo
 from store.db import transaction
 
@@ -281,3 +283,162 @@ def sync_knowledge_dir(
         created_version_ids=created_version_ids,
         details=details,
     )
+
+
+# —— 后台文档创建/上传（最小版：生成 draft，复用后续审核/发布/回滚） ——
+
+
+def list_documents(db_path: Path | str | None = None) -> list[dict[str, Any]]:
+    """列出已有文档，供后台「更新已有文档」下拉选择。"""
+
+    with transaction(db_path or settings.DB_PATH) as connection:
+        rows = connection.execute(
+            "SELECT doc_id, title, source_path, kb_id FROM documents ORDER BY source_path"
+        ).fetchall()
+        return [
+            {
+                "doc_id": row["doc_id"],
+                "title": row["title"],
+                "source_path": row["source_path"],
+                "kb_id": row["kb_id"],
+            }
+            for row in rows
+        ]
+
+
+def _build_content_md(*, title: str, kb_code: str, audience: str, body_md: str) -> str:
+    """统一生成带 front matter 的 Markdown，保证与 knowledge/ 同步格式一致。"""
+
+    _, body = parse_front_matter(body_md)
+    body = body.strip()
+    return (
+        "---\n"
+        f"title: {json.dumps(title, ensure_ascii=False)}\n"
+        f"kb: {kb_code}\n"
+        f"audience: {audience}\n"
+        "---\n\n"
+        f"{body}\n"
+    )
+
+
+def create_draft_from_upload(
+    *,
+    title: str,
+    kb_code: str,
+    content_md: str,
+    audience: str = "driver",
+    change_note: str = "",
+    doc_id: str | None = None,
+    actor: str = "admin",
+    db_path: Path | str | None = None,
+) -> DocVersionView:
+    """后台上传/在线编辑生成草稿。
+
+    - doc_id 为空：新建文档 + v1 draft（kb_code 必须对应已存在知识库）；
+    - doc_id 非空：给已有文档追加 next-version draft；
+    - 相同内容重复上传返回 ValueError（路由层转 409），避免制造空草稿；
+    - 只写 draft，线上版本与发布流程不受影响。
+    """
+
+    path = db_path or settings.DB_PATH
+    body_md = content_md.strip()
+    if len(body_md) < 20:
+        raise ValueError("正文太短，至少 20 个字符")
+
+    with transaction(path) as connection:
+        if doc_id:
+            document = connection.execute(
+                "SELECT d.doc_id, d.title, d.kb_id, kb.domain FROM documents d "
+                "JOIN knowledge_bases kb ON kb.kb_id = d.kb_id WHERE d.doc_id = ?",
+                (doc_id,),
+            ).fetchone()
+            if document is None:
+                raise LookupError(f"document not found: {doc_id}")
+
+            resolved_title = document["title"]
+            resolved_kb = document["domain"]
+            content = _build_content_md(
+                title=resolved_title, kb_code=resolved_kb, audience=audience, body_md=body_md
+            )
+            digest = content_hash_of(content)
+            same_content = repo.get_version_by_hash(connection, doc_id, digest)
+            if same_content is not None:
+                raise ValueError("内容与已有版本完全相同，无需新建草稿")
+
+            latest = repo.get_latest_version(connection, doc_id)
+            next_no = int(latest["version_no"]) + 1 if latest else 1
+            version_id = f"{doc_id}-v{next_no}"
+            repo.insert_version(
+                connection,
+                version_id=version_id,
+                doc_id=doc_id,
+                version_no=next_no,
+                content_md=content,
+                content_hash=digest,
+                status="draft",
+                audience=audience,
+                change_note=change_note or "后台上传新版本",
+                created_by=actor,
+            )
+            repo.write_audit(
+                connection,
+                actor=actor,
+                action="draft.created",
+                target_type="version",
+                target_id=version_id,
+                before={"content_hash": latest["content_hash"] if latest else None},
+                after={"content_hash": digest, "version_no": next_no, "source": "admin_upload"},
+                comment=change_note or "后台上传新版本",
+            )
+        else:
+            kb_row = repo.get_knowledge_base_by_code(connection, kb_code) if kb_code else None
+            if kb_row is None:
+                raise LookupError(f"知识库不存在：{kb_code}")
+            suffix = uuid.uuid4().hex[:8]
+            doc_id = f"doc-upload-{suffix}"
+            source_path = f"upload-{suffix}.md"
+            content = _build_content_md(
+                title=title, kb_code=kb_code, audience=audience, body_md=body_md
+            )
+            digest = content_hash_of(content)
+            repo.insert_document(
+                connection,
+                doc_id=doc_id,
+                kb_id=kb_row["kb_id"],
+                source_path=source_path,
+                title=title,
+            )
+            version_id = f"{doc_id}-v1"
+            repo.insert_version(
+                connection,
+                version_id=version_id,
+                doc_id=doc_id,
+                version_no=1,
+                content_md=content,
+                content_hash=digest,
+                status="draft",
+                audience=audience,
+                change_note=change_note or "后台新建文档",
+                created_by=actor,
+            )
+            repo.write_audit(
+                connection,
+                actor=actor,
+                action="document.created",
+                target_type="document",
+                target_id=doc_id,
+                after={"source_path": source_path, "kb_id": kb_row["kb_id"]},
+                comment="后台上传/在线编辑创建",
+            )
+            repo.write_audit(
+                connection,
+                actor=actor,
+                action="draft.created",
+                target_type="version",
+                target_id=version_id,
+                after={"version_no": 1, "source_path": source_path},
+                comment=change_note or "后台新建文档",
+            )
+
+        updated = repo.get_version(connection, version_id)
+        return _version_view(updated, include_content=True)

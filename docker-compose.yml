@@ -1,0 +1,50 @@
+# 司机卡券 AI 审批助手 —— 一键部署编排
+# 三个服务:
+#   driver-mock  Mock 司机域微服务(仅内部网络,不暴露宿主机端口)
+#   backend      FastAPI 主服务(:8000,含 Trace 调试台 / 管理接口 /admin/*)
+#   frontend     React 审批对话台(nginx 托管构建产物,/api 反代 backend)
+# 前置:cp course.env.example course.env 并填入自己的模型 Key
+
+services:
+  driver-mock:
+    build: .
+    command: ["uvicorn", "driver_service_mock:app", "--host", "0.0.0.0", "--port", "8082"]
+    # 镜像自带的健康检查针对主服务 8000 端口,Mock 跑 8082,这里关闭避免误报 unhealthy
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+
+  backend:
+    build: .
+    # 默认命令即 uvicorn main:app :8000,entrypoint 会先完成种子库初始化
+    environment:
+      # Mock 司机域微服务走 compose 内部网络;接真实后端时改这一个变量即可
+      - DRIVER_SERVICE_BASE_URL=http://driver-mock:8082
+      - HF_ENDPOINT=https://hf-mirror.com
+      # 管理接口共享密钥,demo 沿用默认值;对外部署务必改成强随机值
+      - AGENT_ADMIN_TOKEN=${AGENT_ADMIN_TOKEN:-dev-admin-token}
+      - TZ=Asia/Shanghai
+    volumes:
+      # course.env 只读挂载进容器,不打包进镜像(含真实 Key,防泄露)
+      - ./course.env:/app/course.env:ro
+      # SQLite 平台库(知识发布/审计)与本地 embedding 模型缓存持久化
+      - backend_data:/app/backend/data
+      - hf_cache:/root/.cache/huggingface
+    ports:
+      - "8000:8000"
+    depends_on:
+      - driver-mock
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend_data:
+  hf_cache:

@@ -54,25 +54,3 @@ def fallback_answer(category: str) -> str:
     )
 
 
-# ── 司机域风险识别 ──
-# 高风险写操作关键词 → 直接拦截，不走工具调用，转人工审批。
-def classify_risk(intent: str, user_message: str) -> str:
-    """司机域风险识别：识别高风险写操作，返回 "high" / "low"。
-
-    设计原则：司机域只拦截会改业务数据的操作（发起退款、申请补偿、修改订单），
-    只读查询（查退款进度、查卡券、查收入、查活动）全是 low。
-
-    注意：关键词必须带动作前缀（"发起退款" 而非单独 "退款"），
-    否则 "查退款进度" 这种只读查询会被误判成高风险。
-    """
-    text = f"{intent} {user_message}"
-    # 明确的写操作短语（带动作前缀）
-    high_risk_patterns = [
-        "发起退款", "申请退款", "要退款", "我要退款",
-        "申请补偿", "要补偿", "我要补偿", "要赔偿", "我要赔偿",
-        "取消订单", "撤单", "我要撤单",
-        "修改订单", "变更订单", "更改订单",
-    ]
-    if any(p in text for p in high_risk_patterns):
-        return "high"
-    return "low"

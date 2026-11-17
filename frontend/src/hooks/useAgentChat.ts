@@ -32,7 +32,7 @@ const DEFAULT_USERS: DemoUser[] = [
 
 export function useAgentChat() {
   const [users] = useState<DemoUser[]>(DEFAULT_USERS);
-  const [selectedUserId, setSelectedUserId] = useState("driver-001");
+  const [selectedUserId, setSelectedUserId] = useState("driver_001");
   // Task 19：调试台角色切换（driver/agent/admin）。后端只信请求顶层 runtime_role，
   // agent/admin 可见 internal_playbook 库，driver 被硬隔离（TR-19.2 验证点）。
   const [role, setRole] = useState<RuntimeRole>("driver");

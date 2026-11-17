@@ -1,4 +1,4 @@
-"""发布 / 灰度 / 回滚服务（Task 6 起）。
+﻿"""发布 / 灰度 / 回滚服务（Task 6 起）。
 
 Task 6：publish_release 不可变快照 + 门禁 hook；
 Task 7：resolve_gray_route 灰度路由 + 灰度配置；
@@ -23,7 +23,8 @@ from api.schemas import (
     RollbackRequest,
 )
 from config import settings
-from rag.knowledge_base import build_chunks_from_content, parse_front_matter
+from rag.documents import parse_front_matter
+from rag.knowledge_base import build_chunks_from_content
 from store import repository as repo
 from store.db import transaction, utc_now_iso
 from store.gate import run_release_gate
@@ -99,6 +100,25 @@ def publish_release(
     if not request.version_ids:
         raise ReleaseStateError("version_ids 不能为空")
 
+    # —— 门禁阶段 ——
+    # 门禁只读；失败时要留下 gate.blocked 审计，而审计不能和业务写操作共用事务：
+    # raise 会让 transaction() 回滚，写在同一个 connection 上的审计会被一起撤销（等于没记）。
+    # 所以门禁放在业务事务外，失败时用独立事务落审计，提交后再抛。
+    gate = run_release_gate(request.version_ids, db_path=db_path)
+    if not gate.passed:
+        with transaction(db_path or settings.DB_PATH) as audit_connection:
+            repo.write_audit(
+                audit_connection,
+                actor=actor,
+                action="gate.blocked",
+                target_type="release",
+                target_id="",
+                after={"failures": [f.model_dump() for f in gate.failures]},
+                comment="发布质量门禁未通过",
+            )
+        # 审计已提交，此时没有任何事务开着，不会被后续异常回滚。
+        raise GateBlockedError(gate)
+
     with transaction(db_path or settings.DB_PATH) as connection:
         # —— 校验阶段 ——
         seen_docs: set[str] = set()
@@ -134,21 +154,6 @@ def publish_release(
                     f"已存在灰度发布 {existing_candidate['release_id']}，"
                     "请先通过回滚/转正处理后再发起新的灰度"
                 )
-
-        # —— 门禁阶段（Task 6 placeholder 恒过；Task 16 在此阻断坏版本）——
-        gate = run_release_gate(request.version_ids, db_path=db_path)
-        if not gate.passed:
-            repo.write_audit(
-                connection,
-                actor=actor,
-                action="gate.blocked",
-                target_type="release",
-                target_id="",
-                after={"failures": [f.model_dump() for f in gate.failures]},
-                comment="发布质量门禁未通过",
-            )
-            # 在任何 release 数据落库前抛出，事务回滚（仅审计事件保留）。
-            raise GateBlockedError(gate)
 
         # —— 落库阶段 ——
         release_no = repo.max_release_no(connection) + 1

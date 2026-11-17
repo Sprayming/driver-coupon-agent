@@ -15,6 +15,11 @@ Intent = Literal[
     "order_query",
     "refund_request",
     "complaint",
+    # L41 对齐：司机问自身身份/等级/权益时直接读 Runtime Context，不走业务工具与知识检索。
+    "runtime_identity",
+    # L41 对齐：索要系统提示词/隐藏推理/工具 schema，或消息命中 Prompt Injection 特征。
+    # 由 rag/intent.py 的路由侧产出，customer_service_agent 的响应侧统一拒答。
+    "security_request",
     "unknown",
     ]
 
@@ -35,6 +40,13 @@ ReleaseStatus = Literal["candidate", "stable", "rolled_back"]
 # Audience：driver 司机可见；internal 仅内部角色，对司机全通道物理不可达（FR-9）。
 Audience = Literal["driver", "internal"]
 
+class HistoryMessage(BaseModel):
+    """一轮历史对话：由客户端回传，服务端只做压缩和脱敏，不信任其业务结论。"""
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class ChatRequest(BaseModel):
     """调试后台发送给 `/chat` 的最小请求格式"""
 
@@ -48,6 +60,8 @@ class ChatRequest(BaseModel):
     # user_message 才是真正交给模型的用户输入，必须和 runtime_* 分开放。
     user_message: str = Field(..., description="用户输入的问题")
     runtime_context:dict[str,Any]|None =None
+    # L34 对齐 L41：历史消息由客户端回传，服务端只做窗口压缩 + 脱敏后才进模型。
+    history_messages: list[HistoryMessage] = Field(default_factory=list)
     reasoning_view: ReasoningView="default"# 推理视图，默认默认
     debug: bool = True # 是否开启调试模式
     # —— RAG 平台化（Task 2）——
@@ -741,6 +755,36 @@ class RoutePlan(BaseModel):
     fallback_policy: str = "default"
 
 
+class RoutePlanCandidate(BaseModel):
+    """模型给出的路由候选（只做提议，不具执行资格）。
+
+    对标小哲 L41 的 RoutePlanCandidate：模型可以补充工具和知识域，
+    但不能自相矛盾、不能降低风险。任何一条校验不过，候选整体作废，退回规则基线。
+    """
+
+    intent: str
+    needs_rag: bool = False
+    needs_business_tools: bool = False
+    required_tools: list[str] = Field(default_factory=list)
+    knowledge_domains: list[str] = Field(default_factory=list)
+    risk_level: RiskLevel = "low"
+    requires_workflow: bool = False
+    fallback_policy: str = "default"
+    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _check_cross_field(self) -> "RoutePlanCandidate":
+        """跨字段自洽校验：模型输出的内部矛盾在构造对象时就拒绝。"""
+
+        if self.required_tools and not self.needs_business_tools:
+            raise ValueError("required_tools 非空时 needs_business_tools 必须为 true")
+        if self.requires_workflow and self.risk_level != "high":
+            raise ValueError("requires_workflow=true 时 risk_level 必须为 high")
+        if self.requires_workflow and self.fallback_policy != "workflow_first":
+            raise ValueError("requires_workflow=true 时 fallback_policy 必须为 workflow_first")
+        return self
+
+
 class ToolCandidate(BaseModel):
     """工具候选摘要：只暴露工具名、域、是否允许在轻路径调用、风险等级。"""
     name: str
@@ -780,3 +824,69 @@ class HighRiskAssessment(BaseModel):
     reasons: list[str]
     # 明确列出本轮被禁止的写动作，调试台和审计直接可见。
     blocked_write_actions: list[str] = Field(default_factory=list)
+
+
+# ===========================================================================
+# L41 对齐新增契约：评测回归 + 反馈归因回填。
+# 字段口径按司机域（session / coupon / refund）来，不复用电商订单字段。
+# ===========================================================================
+
+class EvalRunRequest(BaseModel):
+    """评测运行请求：只按 case_id 跑单条用例（cases.yml 或反馈回填用例）。"""
+    case_id: str | None = Field(default=None, description="只运行这一条评测用例")
+
+
+class EvalCaseResult(BaseModel):
+    """单条评测结果，字段对齐 evals/runner.py 的 EvalResult。"""
+    case_id: str
+    passed: bool
+    actual_intent: str
+    actual_next_action: str | None = None
+    failures: list[str] = Field(default_factory=list)
+
+
+class EvalRunResponse(BaseModel):
+    """评测汇总，字段对齐 evals/runner.py 的 EvalSummary。"""
+    total: int = 0
+    passed: int = 0
+    failed: int = 0
+    pass_rate: float = 0.0
+    summary: dict[str, Any] = Field(default_factory=dict)
+    results: list[EvalCaseResult] = Field(default_factory=list)
+
+
+class FailureAttribution(BaseModel):
+    """反馈归因视图，字段对齐 feedback/attribution.py 的 FailureAttribution 数据类。"""
+    category: str
+    reason: str
+    confidence: float = 0.0
+    suggested_fix: str = ""
+
+
+class FeedbackRequest(BaseModel):
+    """司机反馈提交：可绑定已有评测用例，便于把事故回填成回归 case。"""
+    session_id: str = Field(..., description="发生反馈的会话 ID")
+    case_id: str | None = Field(default=None, description="可绑定已有评测用例")
+    rating: Literal["negative", "neutral", "positive"] = "negative"
+    user_comment: str = ""
+    runtime_user_id: str | None = Field(default=None, description="反馈的司机 ID（可选）")
+
+
+class FeedbackRecord(BaseModel):
+    """一条已入库的反馈记录（内存态，见 state/session_state.py）。"""
+    feedback_id: str
+    session_id: str
+    case_id: str | None = None
+    rating: str
+    user_comment: str = ""
+    runtime_user_id: str | None = None
+    trace_event_names: list[str] = Field(default_factory=list)
+    eval_failure_categories: list[str] = Field(default_factory=list)
+    attributions: list[FailureAttribution] = Field(default_factory=list)
+    backfilled_case: dict[str, Any] = Field(default_factory=dict)
+
+
+class FeedbackSubmitResponse(BaseModel):
+    """反馈提交结果：落库记录 + 绑定了 case_id 时顺带的评测报告。"""
+    record: FeedbackRecord
+    eval_report: EvalRunResponse | None = None

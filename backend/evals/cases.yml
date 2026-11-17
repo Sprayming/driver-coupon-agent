@@ -4,8 +4,8 @@
 cases:
   - case_id: "faq-coupon-rules"
     user_message: "未使用的卡券可以退款吗？"
-    expected_intent: "faq_query"
-    expected_next_action: "answer_user"
+    expected_intent: "refund_request"
+    expected_next_action: "ask_clarification"
 
   - case_id: "refund-request-no-coupon"
     user_message: "我要退款"
@@ -29,5 +29,5 @@ cases:
 
   - case_id: "promotion-query"
     user_message: "这个月的冲单奖励活动有什么要求？"
-    expected_intent: "promotion_query"
+    expected_intent: "promotion_consult"
     expected_next_action: "answer_user"

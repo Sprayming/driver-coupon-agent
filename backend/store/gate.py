@@ -1,4 +1,4 @@
-"""发布质量门禁（Task 6 placeholder → Task 16 真实评测）。
+﻿"""发布质量门禁（Task 6 placeholder → Task 16 真实评测）。
 
 run_release_gate 对候选快照构建临时索引 → 跑扩展评测集（expected 漏召回 / forbidden 命中 / must-fallback 失败）→ 失败即 passed=False，
 并在 release_items 落库前阻断发布（AC-12）。调用方（releases.publish_release）已经按

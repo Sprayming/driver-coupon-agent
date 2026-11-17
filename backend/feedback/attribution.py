@@ -83,3 +83,49 @@ class FailureAttributor:
             confidence=0.3,
             suggested_fix="人工查看完整对话记录",
         )
+
+
+def build_backfilled_case(
+    feedback: Any,
+    attribution: FailureAttribution,
+    base_case: Any = None,
+    trace_events: list[dict] | None = None,
+) -> dict[str, Any]:
+    """把一条反馈回填成临时回归用例（L41 对齐）。
+
+    Args:
+        feedback: FeedbackRequest（session_id / case_id / rating / user_comment）
+        attribution: 本轮的失败归因结果
+        base_case: 绑定的已有 EvalCase，用来继承预期 intent / next_action
+        trace_events: 本会话 Trace 事件，用来还原用户原话
+
+    Returns:
+        dict：字段对齐 evals/runner.py 的 EvalCase，附带反馈与归因证据。
+
+    被谁调用：api/routes.py /feedback/submit 端点
+    """
+    session_id = str(getattr(feedback, "session_id", "") or "")
+    case_id = getattr(feedback, "case_id", None) or f"backfill-{session_id or 'unknown'}-{attribution.category}"
+
+    user_message = str(getattr(base_case, "user_message", "") or "")
+    if not user_message and trace_events:
+        for event in reversed(trace_events):
+            if event.get("event_type") == "intent":
+                user_message = str((event.get("data") or {}).get("user_message") or "")
+                if user_message:
+                    break
+
+    return {
+        "case_id": case_id,
+        "user_message": user_message,
+        "expected_intent": str(getattr(base_case, "expected_intent", "") or ""),
+        "expected_next_action": getattr(base_case, "expected_next_action", None),
+        "source": "feedback_backfill",
+        "session_id": session_id,
+        "rating": str(getattr(feedback, "rating", "") or ""),
+        "user_comment": str(getattr(feedback, "user_comment", "") or ""),
+        "attribution_category": attribution.category,
+        "attribution_reason": attribution.reason,
+        "suggested_fix": attribution.suggested_fix,
+        "trace_event_types": [str(event.get("event_type", "")) for event in (trace_events or [])],
+    }

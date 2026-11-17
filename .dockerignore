@@ -1,0 +1,25 @@
+# 版本控制与工作区
+.git
+.trae
+.screenshots
+.vscode
+
+# 密钥与本地配置(绝不进镜像)
+course.env
+*.local
+
+# 运行时产物
+chroma_db
+logs
+backend/data
+backend/__pycache__
+**/__pycache__
+**/.pytest_cache
+
+# 前端产物与依赖(镜像内重新装/构建)
+frontend/node_modules
+frontend/dist
+
+# 个人材料,与部署无关
+周明-简历-草稿.md
+rag-platform-tech-notes.md

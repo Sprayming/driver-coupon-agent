@@ -123,6 +123,38 @@ def pre_retrieval_plan(user_message: str, intent_result: IntentResult, rewrite: 
     )
 
 
+def topics_for_domains(domains: list[str] | None) -> list[str]:
+    """把知识域折算成检索主题。域名的取值和场景一致（refund/usage/promotion/complaint）。"""
+
+    topics: list[str] = []
+    for domain in domains or []:
+        for topic in ALLOWED_TOPICS_BY_SCENE.get(domain, []):
+            if topic not in topics:
+                topics.append(topic)
+    return topics
+
+
+def widen_topics_for_domains(
+    plan: RetrievalPlan, domains: list[str] | None
+) -> RetrievalPlan:
+    """把模型补充的知识域合并进检索计划。
+
+    只**放宽**、不收窄：场景识别是代码算出来的安全基线，模型只能扩大召回范围，
+    不能替代码决定"该查什么"。放宽的代价是候选池变大（靠重排收敛），
+    收窄的代价是漏召回——两者不对称，所以只允许一个方向。
+    """
+
+    extra = [topic for topic in topics_for_domains(domains) if topic not in plan.allowed_topics]
+    if not extra:
+        return plan
+    return plan.model_copy(
+        update={
+            "allowed_topics": [*plan.allowed_topics, *extra],
+            "reason": f"{plan.reason}｜模型补充知识域放宽主题 {extra}",
+        }
+    )
+
+
 def topic_allowed(chunk: KnowledgeChunk, plan: RetrievalPlan) -> bool:
     """判断知识片段是否属于本轮允许主题。
 

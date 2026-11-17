@@ -1,4 +1,4 @@
-"""第 14 课卡券版 reranker 重排。
+﻿"""第 14 课卡券版 reranker 重排。
 
 课程主线：召回负责「宽」，重排负责「精」。
 - 默认模式：本地轻量规则模拟 reranker 的排序信号（本质就是加减分），零网络延迟；
@@ -36,7 +36,7 @@ from rag.query_rewrite import normalize_query
 REASON_WEIGHTS: dict[str, float] = {
     "现行有效规则加权": 0.22,
     "历史卡券降权": -0.25,
-    "用户明确问历史，历史片段放行不降权": 0.0,
+    "用户明确问历史，历史片段加权": 0.15,
     "投诉规则优先": 0.12,
     "退款条件匹配": 0.08,
     "非投诉规则轻微降权": -0.08,
@@ -60,10 +60,11 @@ def explain_rerank_reasons(query: str, hit: KnowledgeHit, asks_for_history: bool
     if hit.chunk.effective_status == "active" and "当前" in query_text:
         reasons.append("现行有效规则加权")
 
-    # ② 历史片段信号（L14 方案 Y 的核心）：用户没问历史才降权，明确问了就放行不动。
+    # ② 历史片段信号（L14 方案 Y 的核心）：用户没问历史才降权；明确问了要正向加权，
+    # 否则 BM25 通道把通用活动规则的基础分抬高后，historical 只「不扣分」会被挤出 Top-K。
     if hit.chunk.effective_status == "historical":
         if asks_for_history:
-            reasons.append("用户明确问历史，历史片段放行不降权")
+            reasons.append("用户明确问历史，历史片段加权")
         else:
             reasons.append("历史卡券降权")
 

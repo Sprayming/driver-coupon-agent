@@ -16,14 +16,17 @@ EXPECTED_TABLES = {
     "releases",
     "release_items",
     "audit_log",
+    "users",
+    "admin_sessions",
+    "approval_results",
 }
 
 
-def test_tr1_1_init_idempotent_and_seven_tables(tmp_path):
+def test_tr1_1_init_idempotent_and_tables(tmp_path):
     db_path = tmp_path / "task1.db"
 
     returned_path_1 = init_db(db_path)
-    # 全新库第一次初始化后 7 张表必须齐全。
+    # 全新库第一次初始化后建表必须齐全（含账号、会话、审批去重）。
     assert set(list_tables(returned_path_1)) == EXPECTED_TABLES
 
     # 重复执行不得报错、不得丢表（幂等）。

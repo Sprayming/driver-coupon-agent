@@ -14,6 +14,7 @@ import httpx
 
 from api.schemas import ChatRequest, ClarificationPlan, ToolSpec
 from config.settings import api_key_is_missing, load_course_env
+from prompts.loader import prompt_manager
 from tools.clarification_planning import build_validated_clarification_plan
 from tools.contracts import TOOL_SPECS
 
@@ -54,35 +55,18 @@ def build_clarification_planner_messages(user_message: str) -> list[dict[str, st
     """构造澄清规划 Prompt。
 
     模型负责理解司机话术、选候选工具、抽已知参数、指出缺失必填参数；
-    真正的参数校验和工具执行全在后端。
+    真正的参数校验和工具执行全在后端。system prompt 由 Prompt Registry 统一管理。
     """
-    schema_hint = {
-        "intent": "general_chat | promotion_consult | order_query | refund_request | complaint | unknown",
-        "tool_name": "get_activity_progress | get_activity_qualification | get_verification_record | ... | null",
-        "known_arguments": {"activity_id": "ACT-12345", "coupon_id": "CP-001", "time_range": "本月"},
-        "missing_required": ["activity_id"],
-        "clarification_question": "需要向司机追问的问题，没有则为 null",
-        "confidence": 0.0,
-        "reason": "一句话说明为什么这样规划",
-    }
-    system_prompt = (
-        "你是网约车司机端卡券客服 Agent 的澄清规划器，只能输出 JSON，不要输出解释。\n"
-        "你的任务是识别司机意图、选择候选工具、抽取已知参数、指出缺失必填参数，并给出澄清问题草案。\n"
-        "重要边界：不要输出 user_id / driver_id；不要替司机从多个活动或卡券里做选择；"
-        "活动进度和活动资格类工具必须有 activity_id 才能查；核销记录工具必须有 coupon_id。\n"
-        "如果司机说的是“我这个活动达标了吗”但没有活动编号，选择目标工具并把 activity_id 放进 missing_required。\n"
-        "如果司机问单量、退款、卡券、收入这类不依赖编号的实时数据，选择对应工具并把缺失字段留空。\n"
-        "如果司机想查看或操作自己的卡券但没给卡券号，选择 get_coupon_status 列出名下卡券，后续由用户确认目标是哪一张。\n"
-        "如果司机问的是活动规则、卡券使用规则、退款规则这类稳定知识，tool_name 填 null。\n"
-        "输出 JSON 必须符合这个字段形状："
-        f"{json.dumps(schema_hint, ensure_ascii=False)}"
-    )
+    fragments = prompt_manager.select_fragments({"phase": "clarification"})
     user_prompt = (
         "可用工具：\n"
         f"{json.dumps(tool_specs_for_prompt(), ensure_ascii=False)}\n\n"
         f"司机消息：{user_message}"
     )
-    return [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+    return [
+        {"role": "system", "content": prompt_manager.render_system_prompt(fragments)},
+        {"role": "user", "content": user_prompt},
+    ]
 
 
 class ClarificationPlannerModelClient:
