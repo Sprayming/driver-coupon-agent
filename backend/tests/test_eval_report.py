@@ -48,7 +48,48 @@ def test_latest_report_returns_none_when_empty(tmp_path):
     assert latest_intent_report(tmp_path) is None
 
 
-def test_eval_endpoint_returns_latest_summary(client):
+def test_eval_endpoint_returns_latest_summary(client, tmp_path, monkeypatch):
+    # 造一份固定报告：真实报告只跑单组时，测试不该跟着红。
+    report = {
+        "cases_count": 56,
+        "providers": {
+            "rules": {
+                "status": "ok",
+                "total": 56,
+                "valid_total": 56,
+                "accuracy": 0.6607,
+                "macro_f1": 0.6796,
+                "latency": {"avg_ms": 0.0, "p95_ms": 0.0},
+                "failures": [{"case_id": f"case-{i}"} for i in range(19)],
+            },
+            "hybrid": {
+                "status": "ok",
+                "total": 56,
+                "valid_total": 56,
+                "accuracy": 0.9821,
+                "macro_f1": 0.97,
+                "latency": {"avg_ms": 386.0, "p95_ms": 919.0},
+                "failures": [{"case_id": "case-0"}],
+            },
+            "llm": {
+                "status": "ok",
+                "total": 56,
+                "valid_total": 56,
+                "accuracy": 0.9821,
+                "macro_f1": 0.97,
+                "latency": {"avg_ms": 865.0, "p95_ms": 1500.0},
+                "failures": [{"case_id": "case-0"}],
+            },
+        },
+    }
+    (tmp_path / "intent_bakeoff_fixture.json").write_text(
+        json.dumps(report), encoding="utf-8"
+    )
+
+    import evals.report_reader as report_reader
+
+    monkeypatch.setattr(report_reader, "DEFAULT_REPORTS_DIR", tmp_path)
+
     resp = client.get("/admin/evals/intent", headers=_headers())
 
     assert resp.status_code == 200, resp.text
